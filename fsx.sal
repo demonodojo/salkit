@@ -22,6 +22,19 @@ fn fsx_is_file(path: String) -> Int ! io, alloc
         return 0
     1
 
+# Fecha de modificación (segundos) o -1.
+fn fsx_mtime(path: String) -> Int ! io, alloc
+    stat_mtime(path)
+
+# Número de inodo de la ruta (siguiendo enlaces) o -1.
+fn fsx_ino(path: String) -> Int ! io, alloc
+    st = bytes_new(stat_size())
+    b = path_to_buf(path)
+    rc = stat_path_ptr(bytes_ptr(b), str_len(path), bytes_ptr(st), stat_size())
+    if rc < 0
+        return 0 - 1
+    bytes_get_i64(st, stat_off_ino())
+
 # Tamaño en bytes o -1.
 fn fsx_size(path: String) -> Int ! io, alloc
     stat_file_size(path)
@@ -107,7 +120,8 @@ fn fsx_remove(path: String) -> Int ! io, alloc
     b = path_to_buf(path)
     unlink_path_ptr(bytes_ptr(b), str_len(path))
 
-# Entradas de un directorio ordenadas; los subdirectorios llevan "/" final.
+# Entradas de un directorio ordenadas; los subdirectorios llevan "/" final (el shim de Linux
+# cuenta como directorio un enlace simbólico que apunta a uno).
 fn fsx_list_dir(dir: String) -> Int ! io, alloc
     sl = vec_new()
     fd = open_read(dir)
@@ -140,14 +154,23 @@ fn fsx_list_dir(dir: String) -> Int ! io, alloc
 # nombres base (ficheros o directorios) que se saltan. Para en `max` resultados.
 fn fsx_walk(root: String, ignores: Int, max: Int) -> Int ! io, alloc
     out = vec_new()
-    x = fsx_walk_into(out, root, "", ignores, max)
+    x = fsx_walk_into(out, root, "", ignores, max, 0, ",")
     x = sk_sl_sort(out)
     out
 
-fn fsx_walk_into(out: Int, root: String, rel: String, ignores: Int, max: Int) -> Int ! io, alloc
+# `anc` lleva los inodos de los directorios ascendientes (",12,40,"): un enlace que apunta a uno
+# de ellos se salta para no girar en bucle.
+fn fsx_walk_into(out: Int, root: String, rel: String, ignores: Int, max: Int, depth: Int, anc: String) -> Int ! io, alloc
+    if depth > 40
+        return 0
     dir = str_slice(root, 0, str_len(root))
     if str_len(rel) > 0
         dir = root + "/" + rel
+    ino = fsx_ino(dir)
+    if ino >= 0
+        if sk_contains(anc, "," + int_to_str(ino) + ",") != 0
+            return 0
+    mine = anc + int_to_str(ino) + ","
     names = fsx_list_dir(dir)
     n = vec_len(names)
     i = 0
@@ -164,7 +187,7 @@ fn fsx_walk_into(out: Int, root: String, rel: String, ignores: Int, max: Int) ->
             if str_len(rel) > 0
                 relp = rel + "/" + base
             if isdir != 0
-                x = fsx_walk_into(out, root, relp, ignores, max)
+                x = fsx_walk_into(out, root, relp, ignores, max, depth + 1, mine)
             else
                 x = vec_push(out, str_as_int(relp))
         i = i + 1

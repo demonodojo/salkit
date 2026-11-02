@@ -8,8 +8,22 @@ Librería de utilidades para [Sal](../sal): JSON, regex, glob, HTTP, procesos, f
 # Sal.toml del proyecto
 [dependencies]
 io = { std = "io" }
-salkit = { path = "../salkit" }   # o { git = "...", version = "0.1" }
+salkit = { git = "https://github.com/demonodojo/salkit", version = "0.1" }   # o { path = "../salkit" }
 ```
+
+`version` es un requisito semver (`0.1` ≡ `^0.1`, es decir `>=0.1.0, <0.2.0`) que `sal fetch` resuelve contra los tags `vX.Y.Z` del repositorio y fija en `Sal.lock`.
+
+## Versiones
+
+Cada versión es un tag ligero `vX.Y.Z` cuyo número coincide con `version` de `Sal.toml`:
+
+```bash
+# subir version en Sal.toml, commit, y:
+git tag v0.1.0
+git push origin main v0.1.0
+```
+
+Mientras sea `0.x`, un cambio de minor (`0.1` → `0.2`) puede romper la API; los parches (`0.1.x`) solo corrigen.
 
 ```bash
 sal install        # enlaza sal_modules/io y sal_modules/salkit

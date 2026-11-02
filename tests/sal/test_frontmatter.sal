@@ -36,4 +36,14 @@ fn main() -> Int ! io, alloc
 
     unclosed = fm_parse("---\na: 1\nno close")
     f = f + ck_int(fm_has_header(unclosed), 0, 23)
+
+    # bloques plegados (>, >-) y literales (|), con claves detrás
+    blk = fm_parse("---\nname: x\ndescription: >-\n  first line\n  second line\n\n  new paragraph\nlit: |\n  a\n    b\n  c\nafter: yes\n---\nbody")
+    f = f + ck_str(fm_get(blk, "name"), "x", 24)
+    f = f + ck_str(fm_get(blk, "description"), "first line second line\nnew paragraph", 25)
+    f = f + ck_str(fm_get(blk, "lit"), "a\n  b\nc", 26)
+    f = f + ck_str(fm_get(blk, "after"), "yes", 27)
+    f = f + ck_str(fm_body(blk), "body", 28)
+    last = fm_parse("---\nd: |\n  only\n\n---\nz")
+    f = f + ck_str(fm_get(last, "d"), "only", 29)
     f

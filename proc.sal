@@ -9,6 +9,7 @@ import "io/process.sal"
 import "io/pipe.sal"
 import "io/time.sal"
 import "strbuf.sal"
+import "int.sal"
 
 fn proc_exit(r: Int) -> Int
     vec_get(r, 0)
@@ -44,6 +45,22 @@ fn proc_argv_tab(argv: Int) -> Bytes ! alloc
 # Ejecuta `path` con la lista de argumentos `argv` (incluye argv[0]).
 # `cwd` vacío = directorio actual. La salida se recorta a `max_bytes` (cabeza + cola).
 fn proc_run(path: String, argv: Int, cwd: String, timeout_ms: Int, max_bytes: Int) -> Int ! io, alloc
+    proc_run_marker(path, argv, cwd, timeout_ms, max_bytes, "")
+
+# Posición del primer `marker` a partir de `from` seguido de un salto de línea (el código de
+# salida ya está completo), o -1.
+fn proc_marker_pos(acc: String, marker: String, from: Int) -> Int
+    m = sk_index_from(acc, marker, from)
+    if m < 0
+        return 0 - 1
+    if sk_index_from(acc, "\n", m) < 0
+        return 0 - 1
+    m
+
+# Como proc_run; si `marker` no está vacío, el proceso lo escribe junto a su código de salida al
+# terminar ("\n" + marker + código + "\n"). Al verlo se deja de leer aunque algún nieto en segundo
+# plano mantenga abierta la tubería, y el código de salida sale del marcador.
+fn proc_run_marker(path: String, argv: Int, cwd: String, timeout_ms: Int, max_bytes: Int, marker: String) -> Int ! io, alloc
     pp = pipe_create()
     if pp < 0
         return proc_result(127, 0, "pipe failed", 0)
@@ -74,9 +91,16 @@ fn proc_run(path: String, argv: Int, cwd: String, timeout_ms: Int, max_bytes: In
                 slice = 100
             k = read_timeout_fd(rd, bytes_ptr(chunk), 65536, slice)
             if k > 0
+                before = str_len(acc)
                 if total < hard_cap
                     acc = acc + bytes_to_str(bytes_view(chunk, 0, k))
                 total = total + k
+                if str_len(marker) > 0
+                    from = before - str_len(marker)
+                    if from < 0
+                        from = 0
+                    if proc_marker_pos(acc, marker, from) >= 0
+                        go = 0
             elsif k == 0
                 go = 0
             elsif k != 0 - 11
@@ -86,6 +110,16 @@ fn proc_run(path: String, argv: Int, cwd: String, timeout_ms: Int, max_bytes: In
     status = wait_pid(pid)
     x = close_fd(rd)
     code = wait_exit_code(status)
+    if str_len(marker) > 0
+        mp = proc_marker_pos(acc, marker, 0)
+        if mp >= 0
+            nl = sk_index_from(acc, "\n", mp)
+            code = sk_parse_int(str_slice(acc, mp + str_len(marker), nl))
+            cut = mp
+            if cut > 0
+                if str_char(acc, cut - 1) == 10
+                    cut = cut - 1
+            acc = str_slice(acc, 0, cut)
     if timed_out != 0
         code = 124
     trunc = 0
@@ -95,9 +129,18 @@ fn proc_run(path: String, argv: Int, cwd: String, timeout_ms: Int, max_bytes: In
     proc_result(code, timed_out, acc, trunc)
 
 # Ejecuta `shell -c cmd` (shell = "/bin/sh" en Linux, "/bin/sosh" en soso).
+# Con un shell POSIX la orden termina cuando termina el shell, aunque deje procesos en segundo plano
+# con la tubería abierta (`servidor &`): un `trap ... EXIT` escribe el código de salida y se deja de leer.
+# `sosh` no se envuelve: no garantiza `trap`.
 fn proc_sh(shell: String, cmd: String, cwd: String, timeout_ms: Int, max_bytes: Int) -> Int ! io, alloc
     argv = vec_new()
     x = vec_push(argv, str_as_int(shell))
     x = vec_push(argv, str_as_int("-c"))
-    x = vec_push(argv, str_as_int(cmd))
-    proc_run(shell, argv, cwd, timeout_ms, max_bytes)
+    marker = ""
+    script = str_slice(cmd, 0, str_len(cmd))
+    if sk_ends_with(shell, "sosh") == 0
+        marker = "@@salkit-exit:" + int_to_str(uptime_ms()) + ":"
+        bs = char_to_str(92)
+        script = "trap 'printf " + char_to_str(34) + bs + "n%s%s" + bs + "n" + char_to_str(34) + " " + marker + " " + char_to_str(34) + "$?" + char_to_str(34) + "' EXIT" + char_to_str(10) + cmd
+    x = vec_push(argv, str_as_int(script))
+    proc_run_marker(shell, argv, cwd, timeout_ms, max_bytes, marker)

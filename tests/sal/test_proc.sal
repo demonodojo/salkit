@@ -1,5 +1,6 @@
 import "../../proc.sal"
 import "../../strbuf.sal"
+import "io/time.sal"
 import "support/assert.sal"
 
 fn main() -> Int ! io, alloc
@@ -29,4 +30,16 @@ fn main() -> Int ! io, alloc
     f = f + ck_str(proc_output(r6), "", 12)
     r7 = proc_run("/definitely/not/here", argv, "", 2000, 1000)
     f = f + ck_int(proc_exit(r7) != 0, 1, 13)
+    # un proceso en segundo plano con la tubería abierta no bloquea la orden
+    t0 = uptime_ms()
+    r8 = proc_sh("/bin/sh", "sleep 3 &\necho started", "", 10000, 1000)
+    f = f + ck_str(proc_output(r8), "started\n", 14)
+    f = f + ck_int(proc_exit(r8), 0, 15)
+    f = f + ck_int(uptime_ms() - t0 < 2000, 1, 16)
+    # el código de salida y la salida sin salto final sobreviven al envoltorio
+    r9 = proc_sh("/bin/sh", "printf abc; exit 7", "", 5000, 1000)
+    f = f + ck_str(proc_output(r9), "abc", 17)
+    f = f + ck_int(proc_exit(r9), 7, 18)
+    r10 = proc_sh("/bin/sh", "false", "", 5000, 1000)
+    f = f + ck_int(proc_exit(r10), 1, 19)
     f
