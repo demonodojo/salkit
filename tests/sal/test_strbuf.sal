@@ -1,0 +1,39 @@
+import "../../int.sal"
+import "../../strbuf.sal"
+import "support/assert.sal"
+
+fn main() -> Int ! io, alloc
+    f = 0
+    f = f + ck_int(sk_parse_int("123"), 123, 1)
+    f = f + ck_int(sk_parse_int("-45x"), 0 - 45, 2)
+    f = f + ck_int(sk_parse_int("abc"), 0, 3)
+    f = f + ck_int(sk_is_int("-12"), 1, 4)
+    f = f + ck_int(sk_is_int("1.2"), 0, 5)
+    f = f + ck_int(sk_is_int("-"), 0, 6)
+    f = f + ck_int(sk_parse_hex("ff"), 255, 7)
+    f = f + ck_int(sk_parse_hex("00Ab"), 171, 8)
+    f = f + ck_int(sk_index_of("hello world", "o w"), 4, 9)
+    f = f + ck_int(sk_index_of("hello", "z"), 0 - 1, 10)
+    f = f + ck_int(sk_index_from("abcabc", "bc", 2), 4, 11)
+    f = f + ck_int(sk_index_of("abc", ""), 0, 12)
+    f = f + ck_int(sk_starts_with("foobar", "foo"), 1, 13)
+    f = f + ck_int(sk_starts_with("fo", "foo"), 0, 14)
+    f = f + ck_int(sk_ends_with("foobar", "bar"), 1, 15)
+    f = f + ck_int(sk_ends_with("ar", "bar"), 0, 16)
+    f = f + ck_int(sk_count("aaaa", "aa"), 2, 17)
+    f = f + ck_str(sk_trim("  \t hi there \n"), "hi there", 18)
+    f = f + ck_str(sk_trim("   "), "", 19)
+    f = f + ck_str(sk_lower("HeLLo-9"), "hello-9", 20)
+    f = f + ck_str(sk_replace_all("a-b-c", "-", "::"), "a::b::c", 21)
+    f = f + ck_str(sk_replace_all("abc", "", "x"), "abc", 22)
+    lines = sk_split_lines("one\r\ntwo\n\nlast")
+    f = f + ck_int(sk_sl_len(lines), 4, 23)
+    f = f + ck_str(sk_sl_get(lines, 0), "one", 24)
+    f = f + ck_str(sk_sl_get(lines, 2), "", 25)
+    f = f + ck_str(sk_sl_get(lines, 3), "last", 26)
+    f = f + ck_int(sk_count_lines("a\nb\n"), 2, 27)
+    f = f + ck_int(sk_count_lines("a\nb"), 2, 28)
+    parts = sk_split_char("a,,b", 44)
+    f = f + ck_int(sk_sl_len(parts), 3, 29)
+    f = f + ck_str(sk_join(parts, "|"), "a||b", 30)
+    f

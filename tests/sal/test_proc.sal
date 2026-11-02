@@ -1,0 +1,32 @@
+import "../../proc.sal"
+import "../../strbuf.sal"
+import "support/assert.sal"
+
+fn main() -> Int ! io, alloc
+    f = 0
+    r = proc_sh("/bin/sh", "echo out; echo err 1>&2; exit 3", "", 5000, 1000)
+    f = f + ck_int(proc_exit(r), 3, 1)
+    f = f + ck_str(proc_output(r), "out\nerr\n", 2)
+    f = f + ck_int(proc_timed_out(r), 0, 3)
+    r2 = proc_sh("/bin/sh", "sleep 5", "", 400, 1000)
+    f = f + ck_int(proc_timed_out(r2), 1, 4)
+    f = f + ck_int(proc_exit(r2), 124, 5)
+    r3 = proc_sh("/bin/sh", "pwd", "/tmp", 5000, 1000)
+    f = f + ck_str(sk_trim(proc_output(r3)), "/tmp", 6)
+    r4 = proc_sh("/bin/sh", "seq 1 20000", "", 5000, 200)
+    f = f + ck_int(proc_truncated(r4), 1, 7)
+    f = f + ck_int(sk_contains(proc_output(r4), "bytes truncated"), 1, 8)
+    f = f + ck_int(sk_starts_with(proc_output(r4), "1\n2\n"), 1, 9)
+    f = f + ck_int(sk_ends_with(proc_output(r4), "20000\n"), 1, 10)
+    argv = vec_new()
+    x = vec_push(argv, str_as_int("printf"))
+    x = vec_push(argv, str_as_int("%s-%s"))
+    x = vec_push(argv, str_as_int("a"))
+    x = vec_push(argv, str_as_int("b"))
+    r5 = proc_run("printf", argv, "", 5000, 1000)
+    f = f + ck_str(proc_output(r5), "a-b", 11)
+    r6 = proc_sh("/bin/sh", "cat", "", 5000, 1000)
+    f = f + ck_str(proc_output(r6), "", 12)
+    r7 = proc_run("/definitely/not/here", argv, "", 2000, 1000)
+    f = f + ck_int(proc_exit(r7) != 0, 1, 13)
+    f

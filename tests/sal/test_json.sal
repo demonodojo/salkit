@@ -1,0 +1,66 @@
+import "../../json.sal"
+import "support/assert.sal"
+
+fn main() -> Int ! io, alloc
+    f = 0
+    src = "{{\"id\":\"c1\",\"n\":-42,\"ok\":true,\"no\":null,\"f\":1.5e2,\"arr\":[1,2,{{\"x\":\"y\"}}],\"s\":\"a\\nb\\\"q\\\\ \\u00e9\\ud83d\\ude00\"}}"
+    d = json_parse(src)
+    f = f + ck_int(json_ok(d), 1, 1)
+    r = json_root(d)
+    f = f + ck_int(json_kind(d, r), 6, 2)
+    f = f + ck_int(json_len(d, r), 7, 3)
+    f = f + ck_str(json_get_str(d, r, "id"), "c1", 4)
+    f = f + ck_int(json_get_int(d, r, "n"), 0 - 42, 5)
+    f = f + ck_int(json_bool(d, json_get(d, r, "ok")), 1, 6)
+    f = f + ck_int(json_is_null(d, json_get(d, r, "no")), 1, 7)
+    f = f + ck_int(json_get_int(d, r, "f"), 1, 8)
+    f = f + ck_str(json_get_str(d, r, "f"), "1.5e2", 9)
+    f = f + ck_int(json_has(d, r, "missing"), 0, 10)
+    f = f + ck_int(json_len(d, json_get(d, r, "arr")), 3, 11)
+    f = f + ck_str(json_str(d, json_path(d, r, "arr.2.x")), "y", 12)
+    f = f + ck_int(json_int(d, json_path(d, r, "arr.1")), 2, 13)
+    f = f + ck_int(json_path(d, r, "arr.9"), 0 - 1, 14)
+    s = json_get_str(d, r, "s")
+    f = f + ck_int(str_char(s, 0), 97, 15)
+    f = f + ck_int(str_char(s, 1), 10, 16)
+    f = f + ck_int(str_char(s, 2), 98, 17)
+    f = f + ck_int(str_char(s, 3), 34, 18)
+    f = f + ck_int(str_char(s, 4), 113, 19)
+    f = f + ck_int(str_char(s, 5), 92, 20)
+    f = f + ck_int(str_char(s, 7), 195, 21)
+    f = f + ck_int(str_char(s, 8), 169, 22)
+    f = f + ck_int(str_char(s, 9), 240, 23)
+    f = f + ck_int(str_len(s), 13, 24)
+    f = f + ck_str(json_key(d, json_at(d, r, 1)), "n", 25)
+
+    e1 = json_parse("{{\"a\":")
+    f = f + ck_int(json_ok(e1), 0, 26)
+    e2 = json_parse("[1,2")
+    f = f + ck_int(json_ok(e2), 0, 27)
+    e3 = json_parse("{{\"a\" 1}}")
+    f = f + ck_int(json_ok(e3), 0, 28)
+    f = f + ck_int(json_ok(json_parse("  [ ] ")), 1, 29)
+    f = f + ck_int(json_ok(json_parse("\"unterminated")), 0, 30)
+    f = f + ck_int(json_ok(json_parse("tru")), 0, 31)
+
+    f = f + ck_str(json_escape("a\"b\\c\nd\te\r" + char_to_str(1)), "a\\\"b\\\\c\\nd\\te\\r\\u0001", 32)
+    f = f + ck_str(json_quote("hi"), "\"hi\"", 33)
+    f = f + ck_str(jb_obj(jb_kv("k", json_quote("v")) + "," + jb_kv("n", "5")), "{{\"k\":\"v\",\"n\":5}}", 34)
+    f = f + ck_str(jb_arr("1,2"), "[1,2]", 35)
+
+    d2 = json_parse("{{ \"a\" : [ 1 , \"x\\ny\" , true , null , {{\"b\":{{}}}} ] , \"c\" : -3.25 }}")
+    f = f + ck_str(json_dump(d2, json_root(d2)), "{{\"a\":[1,\"x\\ny\",true,null,{{\"b\":{{}}}}],\"c\":-3.25}}", 36)
+    d3 = json_parse(json_dump(d2, json_root(d2)))
+    f = f + ck_str(json_dump(d3, json_root(d3)), json_dump(d2, json_root(d2)), 37)
+
+    deep = ""
+    i = 0
+    while i < 150
+        deep = deep + "["
+        i = i + 1
+    i = 0
+    while i < 150
+        deep = deep + "]"
+        i = i + 1
+    f = f + ck_int(json_ok(json_parse(deep)), 1, 38)
+    f

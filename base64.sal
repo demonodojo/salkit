@@ -1,0 +1,51 @@
+# salkit/base64.sal — codificación base64 estándar (RFC 4648) con relleno.
+
+fn b64_char(v: Int) -> Int
+    if v < 26
+        return 65 + v
+    if v < 52
+        return 71 + v
+    if v < 62
+        return v - 4
+    if v == 62
+        return 43
+    47
+
+fn b64_encode(b: Bytes) -> String ! alloc
+    n = bytes_len(b)
+    m = (n + 2) / 3 * 4
+    if m <= 0
+        return ""
+    out = bytes_new(m)
+    i = 0
+    o = 0
+    while i + 2 < n
+        v = (bytes_get_u8(b, i) << 16) | (bytes_get_u8(b, i + 1) << 8) | bytes_get_u8(b, i + 2)
+        x = bytes_set_u8(out, o, b64_char((v >> 18) & 63))
+        x = bytes_set_u8(out, o + 1, b64_char((v >> 12) & 63))
+        x = bytes_set_u8(out, o + 2, b64_char((v >> 6) & 63))
+        x = bytes_set_u8(out, o + 3, b64_char(v & 63))
+        i = i + 3
+        o = o + 4
+    rest = n - i
+    if rest == 1
+        v = bytes_get_u8(b, i) << 16
+        x = bytes_set_u8(out, o, b64_char((v >> 18) & 63))
+        x = bytes_set_u8(out, o + 1, b64_char((v >> 12) & 63))
+        x = bytes_set_u8(out, o + 2, 61)
+        x = bytes_set_u8(out, o + 3, 61)
+    if rest == 2
+        v = (bytes_get_u8(b, i) << 16) | (bytes_get_u8(b, i + 1) << 8)
+        x = bytes_set_u8(out, o, b64_char((v >> 18) & 63))
+        x = bytes_set_u8(out, o + 1, b64_char((v >> 12) & 63))
+        x = bytes_set_u8(out, o + 2, b64_char((v >> 6) & 63))
+        x = bytes_set_u8(out, o + 3, 61)
+    bytes_to_str(bytes_view(out, 0, m))
+
+fn b64_encode_str(s: String) -> String ! alloc
+    n = str_len(s)
+    if n <= 0
+        return ""
+    b = bytes_new(n)
+    x = str_bytes_copy(b, 0, s)
+    b64_encode(b)

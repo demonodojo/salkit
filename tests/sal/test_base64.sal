@@ -1,0 +1,22 @@
+import "../../base64.sal"
+import "support/assert.sal"
+
+fn main() -> Int ! io, alloc
+    f = 0
+    f = f + ck_str(b64_encode_str(""), "", 1)
+    f = f + ck_str(b64_encode_str("f"), "Zg==", 2)
+    f = f + ck_str(b64_encode_str("fo"), "Zm8=", 3)
+    f = f + ck_str(b64_encode_str("foo"), "Zm9v", 4)
+    f = f + ck_str(b64_encode_str("foob"), "Zm9vYg==", 5)
+    f = f + ck_str(b64_encode_str("fooba"), "Zm9vYmE=", 6)
+    f = f + ck_str(b64_encode_str("foobar"), "Zm9vYmFy", 7)
+    b = bytes_new(3)
+    x = bytes_set_u8(b, 0, 255)
+    x = bytes_set_u8(b, 1, 254)
+    x = bytes_set_u8(b, 2, 253)
+    f = f + ck_str(b64_encode(b), "//79", 8)
+    b2 = bytes_new(2)
+    x = bytes_set_u8(b2, 0, 251)
+    x = bytes_set_u8(b2, 1, 255)
+    f = f + ck_str(b64_encode(b2), "+/8=", 9)
+    f

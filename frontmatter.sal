@@ -1,0 +1,239 @@
+# salkit/frontmatter.sal — cabecera "---" estilo YAML sencillo (agentes y skills).
+#
+# Admite `clave: valor`, mapas y listas anidados por sangría, `- elemento`, valores
+# entre comillas, `[a, b]`, true/false/null/números y comentarios `#`.
+# El resultado se convierte a un documento de salkit/json.sal.
+
+import "json.sal"
+import "strbuf.sal"
+import "int.sal"
+
+# Asa: 0 documento JSON, 1 cuerpo (texto tras la cabecera), 2 hay cabecera (1/0).
+fn fm_doc(fm: Int) -> Int
+    vec_get(fm, 0)
+
+fn fm_root(fm: Int) -> Int
+    json_root(vec_get(fm, 0))
+
+fn fm_body(fm: Int) -> String
+    str_from_int(vec_get(fm, 1))
+
+fn fm_has_header(fm: Int) -> Int
+    vec_get(fm, 2)
+
+# Valor de una clave de primer nivel como texto ("" si falta).
+fn fm_get(fm: Int, key: String) -> String
+    d = vec_get(fm, 0)
+    json_get_str(d, json_root(d), key)
+
+fn fm_has(fm: Int, key: String) -> Int
+    d = vec_get(fm, 0)
+    json_has(d, json_root(d), key)
+
+fn fm_indent(line: String) -> Int
+    n = str_len(line)
+    i = 0
+    while i < n
+        if str_char(line, i) == 32
+            i = i + 1
+        else
+            return i
+    i
+
+# 1 si la línea está vacía o es un comentario.
+fn fm_blank(line: String) -> Int ! alloc
+    t = sk_trim(line)
+    if str_len(t) == 0
+        return 1
+    if str_char(t, 0) == 35
+        return 1
+    0
+
+# Quita un comentario final " # ..." de un valor sin comillas.
+fn fm_strip_comment(s: String) -> String ! alloc
+    if str_len(s) > 0
+        if str_char(s, 0) == 34
+            return s
+        if str_char(s, 0) == 39
+            return s
+    i = sk_index_of(s, " #")
+    if i >= 0
+        return sk_trim(str_slice(s, 0, i))
+    s
+
+fn fm_unquote(s: String) -> String ! alloc
+    n = str_len(s)
+    if n >= 2
+        a = str_char(s, 0)
+        b = str_char(s, n - 1)
+        if a == 34
+            if b == 34
+                return str_slice(s, 1, n - 1)
+        if a == 39
+            if b == 39
+                return str_slice(s, 1, n - 1)
+    s
+
+# Escalar -> fragmento JSON.
+fn fm_scalar(raw: String) -> String ! alloc
+    s = sk_trim(fm_strip_comment(sk_trim(raw)))
+    n = str_len(s)
+    if n == 0
+        return "\"\""
+    if str_char(s, 0) == 34
+        return json_quote(fm_unquote(s))
+    if str_char(s, 0) == 39
+        return json_quote(fm_unquote(s))
+    if str_eq(s, "true") != 0
+        return "true"
+    if str_eq(s, "false") != 0
+        return "false"
+    if str_eq(s, "null") != 0
+        return "null"
+    if str_eq(s, "~") != 0
+        return "null"
+    if sk_is_int(s) != 0
+        return s
+    if str_char(s, 0) == 91
+        if str_char(s, n - 1) == 93
+            return fm_inline_list(str_slice(s, 1, n - 1))
+    json_quote(s)
+
+fn fm_inline_list(inner: String) -> String ! alloc
+    if str_len(sk_trim(inner)) == 0
+        return char_to_str(91) + char_to_str(93)
+    parts = sk_split_char(inner, 44)
+    items = sk_sl_new()
+    n = sk_sl_len(parts)
+    i = 0
+    while i < n
+        x = sk_sl_push(items, fm_scalar(sk_sl_get(parts, i)))
+        i = i + 1
+    jb_arr(jb_join(items))
+
+# Índice de la primera línea con contenido en [i, end), o end.
+fn fm_next_content(lines: Int, i: Int, end: Int) -> Int ! alloc
+    j = i
+    while j < end
+        if fm_blank(sk_sl_get(lines, j)) == 0
+            return j
+        j = j + 1
+    end
+
+# Posición del ":" que separa clave y valor (ignora los ":" dentro de comillas), o -1.
+fn fm_colon(line: String) -> Int
+    n = str_len(line)
+    i = 0
+    q = 0
+    while i < n
+        c = str_char(line, i)
+        if q == 0
+            if c == 34
+                q = 34
+            elsif c == 39
+                q = 39
+            elsif c == 58
+                if i + 1 >= n
+                    return i
+                if str_char(line, i + 1) == 32
+                    return i
+        else
+            if c == q
+                q = 0
+        i = i + 1
+    0 - 1
+
+# Mapa por sangría; cur[0] es la línea actual y avanza.
+fn fm_map(lines: Int, end: Int, indent: Int, cur: Int) -> String ! alloc
+    parts = sk_sl_new()
+    go = 1
+    while go != 0
+        i = fm_next_content(lines, vec_get(cur, 0), end)
+        if i >= end
+            go = 0
+        else
+            line = sk_sl_get(lines, i)
+            ind = fm_indent(line)
+            if ind < indent
+                go = 0
+            else
+                text = sk_trim(line)
+                c = fm_colon(text)
+                if c <= 0
+                    r1 = vec_set(cur, 0, i + 1)
+                else
+                    key = fm_unquote(sk_trim(str_slice(text, 0, c)))
+                    rest = sk_trim(fm_strip_comment(sk_trim(str_slice(text, c + 1, str_len(text)))))
+                    r2 = vec_set(cur, 0, i + 1)
+                    val = ""
+                    if str_len(rest) > 0
+                        val = fm_scalar(rest)
+                    else
+                        nx = fm_next_content(lines, i + 1, end)
+                        val = "null"
+                        if nx < end
+                            nind = fm_indent(sk_sl_get(lines, nx))
+                            if nind > ind
+                                if sk_starts_with(sk_trim(sk_sl_get(lines, nx)), "-") != 0
+                                    val = fm_list(lines, end, nind, cur)
+                                else
+                                    val = fm_map(lines, end, nind, cur)
+                    r3 = sk_sl_push(parts, jb_kv(key, val))
+    jb_obj(jb_join(parts))
+
+fn fm_list(lines: Int, end: Int, indent: Int, cur: Int) -> String ! alloc
+    parts = sk_sl_new()
+    go = 1
+    while go != 0
+        i = fm_next_content(lines, vec_get(cur, 0), end)
+        if i >= end
+            go = 0
+        else
+            line = sk_sl_get(lines, i)
+            text = sk_trim(line)
+            if fm_indent(line) < indent
+                go = 0
+            elsif sk_starts_with(text, "-") == 0
+                go = 0
+            else
+                r1 = vec_set(cur, 0, i + 1)
+                item = sk_trim(str_slice(text, 1, str_len(text)))
+                r2 = sk_sl_push(parts, fm_scalar(item))
+    jb_arr(jb_join(parts))
+
+fn fm_result(json_text: String, body: String, has: Int) -> Int ! alloc
+    r = vec_new()
+    x = vec_push(r, json_parse(json_text))
+    x = vec_push(r, str_as_int(body))
+    x = vec_push(r, has)
+    r
+
+# Separa y convierte la cabecera de un texto. Sin cabecera, el documento es {} y
+# el cuerpo es todo el texto.
+fn fm_parse(text: String) -> Int ! alloc
+    lines = sk_split_lines(text)
+    n = sk_sl_len(lines)
+    empty = jb_obj("")
+    if n == 0
+        return fm_result(empty, text, 0)
+    if str_eq(sk_trim(sk_sl_get(lines, 0)), "---") == 0
+        return fm_result(empty, text, 0)
+    close = 0 - 1
+    i = 1
+    while i < n
+        if close < 0
+            if str_eq(sk_trim(sk_sl_get(lines, i)), "---") != 0
+                close = i
+        i = i + 1
+    if close < 0
+        return fm_result(empty, text, 0)
+    cur = vec_new()
+    x = vec_push(cur, 1)
+    js = fm_map(lines, close, 0, cur)
+    body_lines = sk_sl_new()
+    j = close + 1
+    while j < n
+        y = sk_sl_push(body_lines, sk_sl_get(lines, j))
+        j = j + 1
+    body = sk_join(body_lines, char_to_str(10))
+    fm_result(js, body, 1)

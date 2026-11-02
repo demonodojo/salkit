@@ -1,0 +1,624 @@
+# salkit/json.sal — parser JSON a arena, constructor y volcado.
+#
+# Un documento es un asa Int; cada nodo es un índice Int (-1 = ausente).
+# Tipos de nodo: 0 null, 1 false, 2 true, 3 string, 4 número, 5 array, 6 objeto.
+# Los números conservan el texto original (json_str) y su parte entera (json_int).
+
+import "int.sal"
+import "strbuf.sal"
+
+# ---------------------------------------------------------------- documento
+
+# Ranuras del asa: 0 kinds, 1 strs, 2 nums, 3 first, 4 next, 5 last, 6 keys,
+# 7 root, 8 pos, 9 err, 10 empty.
+fn json_new_doc() -> Int ! alloc
+    d = vec_new()
+    x = vec_push(d, vec_new())
+    x = vec_push(d, vec_new())
+    x = vec_push(d, vec_new())
+    x = vec_push(d, vec_new())
+    x = vec_push(d, vec_new())
+    x = vec_push(d, vec_new())
+    x = vec_push(d, vec_new())
+    x = vec_push(d, 0 - 1)
+    x = vec_push(d, 0)
+    x = vec_push(d, 0)
+    x = vec_push(d, str_as_int(strdup("")))
+    d
+
+fn jn_new(d: Int, kind: Int) -> Int
+    id = vec_len(vec_get(d, 0))
+    e = vec_get(d, 10)
+    x = vec_push(vec_get(d, 0), kind)
+    x = vec_push(vec_get(d, 1), e)
+    x = vec_push(vec_get(d, 2), 0)
+    x = vec_push(vec_get(d, 3), 0 - 1)
+    x = vec_push(vec_get(d, 4), 0 - 1)
+    x = vec_push(vec_get(d, 5), 0 - 1)
+    x = vec_push(vec_get(d, 6), e)
+    id
+
+fn jn_add(d: Int, parent: Int, child: Int) -> Int
+    last = vec_get(vec_get(d, 5), parent)
+    if last < 0
+        x = vec_set(vec_get(d, 3), parent, child)
+    else
+        x = vec_set(vec_get(d, 4), last, child)
+    x = vec_set(vec_get(d, 5), parent, child)
+    x = vec_set(vec_get(d, 2), parent, vec_get(vec_get(d, 2), parent) + 1)
+    child
+
+# ---------------------------------------------------------------- acceso
+
+fn json_root(d: Int) -> Int
+    vec_get(d, 7)
+
+fn json_ok(d: Int) -> Int
+    if vec_get(d, 9) != 0
+        return 0
+    if vec_get(d, 7) < 0
+        return 0
+    1
+
+fn json_error(d: Int) -> String
+    if vec_get(d, 9) == 0
+        ""
+    else
+        str_from_int(vec_get(d, 9))
+
+fn json_kind(d: Int, n: Int) -> Int
+    if n < 0
+        0 - 1
+    else
+        vec_get(vec_get(d, 0), n)
+
+fn json_is_null(d: Int, n: Int) -> Int
+    if json_kind(d, n) == 0
+        1
+    else
+        0
+
+fn json_is_string(d: Int, n: Int) -> Int
+    if json_kind(d, n) == 3
+        1
+    else
+        0
+
+fn json_is_number(d: Int, n: Int) -> Int
+    if json_kind(d, n) == 4
+        1
+    else
+        0
+
+fn json_is_array(d: Int, n: Int) -> Int
+    if json_kind(d, n) == 5
+        1
+    else
+        0
+
+fn json_is_object(d: Int, n: Int) -> Int
+    if json_kind(d, n) == 6
+        1
+    else
+        0
+
+# Texto de una string (ya sin escapes) o texto original de un número; "" en otro caso.
+fn json_str(d: Int, n: Int) -> String
+    k = json_kind(d, n)
+    if k == 3
+        return str_from_int(vec_get(vec_get(d, 1), n))
+    if k == 4
+        return str_from_int(vec_get(vec_get(d, 1), n))
+    str_from_int(vec_get(d, 10))
+
+# Parte entera de un número (0 si el nodo no es un número). true -> 1.
+fn json_int(d: Int, n: Int) -> Int
+    k = json_kind(d, n)
+    if k == 4
+        return vec_get(vec_get(d, 2), n)
+    if k == 2
+        return 1
+    0
+
+fn json_bool(d: Int, n: Int) -> Int
+    k = json_kind(d, n)
+    if k == 2
+        return 1
+    if k == 4
+        if vec_get(vec_get(d, 2), n) != 0
+            return 1
+    0
+
+# Número de hijos de un array u objeto (0 en otro caso).
+fn json_len(d: Int, n: Int) -> Int
+    k = json_kind(d, n)
+    if k == 5
+        return vec_get(vec_get(d, 2), n)
+    if k == 6
+        return vec_get(vec_get(d, 2), n)
+    0
+
+fn json_first(d: Int, n: Int) -> Int
+    if n < 0
+        0 - 1
+    else
+        vec_get(vec_get(d, 3), n)
+
+fn json_next(d: Int, n: Int) -> Int
+    if n < 0
+        0 - 1
+    else
+        vec_get(vec_get(d, 4), n)
+
+# Clave de un miembro de objeto ("" si el nodo no es miembro).
+fn json_key(d: Int, n: Int) -> String
+    if n < 0
+        str_from_int(vec_get(d, 10))
+    else
+        str_from_int(vec_get(vec_get(d, 6), n))
+
+# Elemento i de un array (o miembro i de un objeto); -1 si no existe.
+fn json_at(d: Int, n: Int, i: Int) -> Int
+    if i < 0
+        return 0 - 1
+    c = json_first(d, n)
+    j = 0
+    while c >= 0
+        if j == i
+            return c
+        j = j + 1
+        c = json_next(d, c)
+    0 - 1
+
+# Miembro `key` de un objeto; -1 si no existe.
+fn json_get(d: Int, n: Int, key: String) -> Int
+    if json_kind(d, n) != 6
+        return 0 - 1
+    c = json_first(d, n)
+    while c >= 0
+        if str_eq(str_from_int(vec_get(vec_get(d, 6), c)), key) != 0
+            return c
+        c = json_next(d, c)
+    0 - 1
+
+fn json_has(d: Int, n: Int, key: String) -> Int
+    if json_get(d, n, key) >= 0
+        1
+    else
+        0
+
+# Ruta con puntos: "choices.0.message.content" (los segmentos numéricos indexan arrays).
+fn json_path(d: Int, n: Int, path: String) -> Int ! alloc
+    segs = sk_split_char(path, 46)
+    cur = n
+    i = 0
+    cnt = sk_sl_len(segs)
+    while i < cnt
+        if cur < 0
+            return 0 - 1
+        seg = sk_sl_get(segs, i)
+        if json_kind(d, cur) == 5
+            if sk_is_int(seg) != 0
+                cur = json_at(d, cur, sk_parse_int(seg))
+            else
+                cur = 0 - 1
+        else
+            cur = json_get(d, cur, seg)
+        i = i + 1
+    cur
+
+fn json_get_str(d: Int, n: Int, key: String) -> String
+    json_str(d, json_get(d, n, key))
+
+fn json_get_int(d: Int, n: Int, key: String) -> Int
+    json_int(d, json_get(d, n, key))
+
+# ---------------------------------------------------------------- escritura
+
+fn jp_hexc(v: Int) -> Int
+    if v < 10
+        48 + v
+    else
+        87 + v
+
+# 1 si el byte hay que escapar dentro de una string JSON.
+fn jp_needs_esc(c: Int) -> Int
+    if c < 32
+        return 1
+    if c == 34
+        return 1
+    if c == 92
+        return 1
+    0
+
+fn jp_esc_seq(c: Int) -> String ! alloc
+    bs = char_to_str(92)
+    if c == 34
+        return bs + char_to_str(34)
+    if c == 92
+        return bs + bs
+    if c == 10
+        return bs + "n"
+    if c == 13
+        return bs + "r"
+    if c == 9
+        return bs + "t"
+    if c == 8
+        return bs + "b"
+    if c == 12
+        return bs + "f"
+    bs + "u00" + char_to_str(jp_hexc(c / 16)) + char_to_str(jp_hexc(c % 16))
+
+# Contenido de una string JSON (sin comillas). Los bytes >= 128 pasan tal cual (UTF-8).
+fn json_escape(s: String) -> String ! alloc
+    n = str_len(s)
+    out = ""
+    start = 0
+    i = 0
+    while i < n
+        c = str_char(s, i)
+        if jp_needs_esc(c) != 0
+            out = out + str_slice(s, start, i) + jp_esc_seq(c)
+            start = i + 1
+        i = i + 1
+    if start == 0
+        return str_slice(s, 0, n)
+    out = out + str_slice(s, start, n)
+    out
+
+# String JSON completa, con comillas.
+fn json_quote(s: String) -> String ! alloc
+    q = char_to_str(34)
+    q + json_escape(s) + q
+
+fn jb_obj(inner: String) -> String ! alloc
+    char_to_str(123) + inner + char_to_str(125)
+
+fn jb_arr(inner: String) -> String ! alloc
+    char_to_str(91) + inner + char_to_str(93)
+
+# "clave":valor_crudo
+fn jb_kv(key: String, raw: String) -> String ! alloc
+    json_quote(key) + ":" + raw
+
+# Lista de fragmentos JSON separados por comas.
+fn jb_join(sl: Int) -> String ! alloc
+    sk_join(sl, ",")
+
+fn json_dump(d: Int, n: Int) -> String ! alloc
+    k = json_kind(d, n)
+    if k == 1
+        return "false"
+    if k == 2
+        return "true"
+    if k == 3
+        return json_quote(json_str(d, n))
+    if k == 4
+        return str_slice(json_str(d, n), 0, str_len(json_str(d, n)))
+    if k == 5
+        out = char_to_str(91)
+        c = json_first(d, n)
+        i = 0
+        while c >= 0
+            if i > 0
+                out = out + ","
+            out = out + json_dump(d, c)
+            i = i + 1
+            c = json_next(d, c)
+        out = out + char_to_str(93)
+        return out
+    if k == 6
+        out = char_to_str(123)
+        c = json_first(d, n)
+        i = 0
+        while c >= 0
+            if i > 0
+                out = out + ","
+            out = out + json_quote(json_key(d, c)) + ":" + json_dump(d, c)
+            i = i + 1
+            c = json_next(d, c)
+        out = out + char_to_str(125)
+        return out
+    "null"
+
+# ---------------------------------------------------------------- parser
+
+fn jp_fail(d: Int, msg: String) -> Int ! alloc
+    if vec_get(d, 9) == 0
+        x = vec_set(d, 9, str_as_int(msg + " at offset " + int_to_str(vec_get(d, 8))))
+    0 - 1
+
+fn jp_ws(t: String, p: Int) -> Int
+    n = str_len(t)
+    i = p
+    while i < n
+        c = str_char(t, i)
+        if c == 32
+            i = i + 1
+        elsif c == 10
+            i = i + 1
+        elsif c == 13
+            i = i + 1
+        elsif c == 9
+            i = i + 1
+        else
+            return i
+    i
+
+fn jp_utf8(cp: Int) -> String ! alloc
+    if cp < 128
+        return char_to_str(cp)
+    if cp < 2048
+        return char_to_str(192 + (cp >> 6)) + char_to_str(128 + (cp & 63))
+    if cp < 65536
+        return char_to_str(224 + (cp >> 12)) + char_to_str(128 + ((cp >> 6) & 63)) + char_to_str(128 + (cp & 63))
+    char_to_str(240 + (cp >> 18)) + char_to_str(128 + ((cp >> 12) & 63)) + char_to_str(128 + ((cp >> 6) & 63)) + char_to_str(128 + (cp & 63))
+
+# Cuatro dígitos hex desde t[p]; -1 si no son válidos.
+fn jp_hex4(t: String, p: Int) -> Int
+    if p + 4 > str_len(t)
+        return 0 - 1
+    v = 0
+    i = 0
+    while i < 4
+        h = sk_hex_digit(str_char(t, p + i))
+        if h < 0
+            return 0 - 1
+        v = v * 16 + h
+        i = i + 1
+    v
+
+# Lee una string; la posición (ranura 8) apunta a la comilla de apertura.
+# Deja el error en la ranura 9 si falla.
+fn jp_string(d: Int, t: String) -> String ! alloc
+    n = str_len(t)
+    i = vec_get(d, 8) + 1
+    start = i
+    out = ""
+    esc = 0
+    while i < n
+        c = str_char(t, i)
+        if c == 34
+            x = vec_set(d, 8, i + 1)
+            if esc == 0
+                return str_slice(t, start, i)
+            return out + str_slice(t, start, i)
+        if c == 92
+            esc = 1
+            out = out + str_slice(t, start, i)
+            if i + 1 >= n
+                x = vec_set(d, 8, i)
+                x = jp_fail(d, "unterminated escape")
+                return ""
+            e = str_char(t, i + 1)
+            i = i + 2
+            if e == 110
+                out = out + char_to_str(10)
+            elsif e == 116
+                out = out + char_to_str(9)
+            elsif e == 114
+                out = out + char_to_str(13)
+            elsif e == 98
+                out = out + char_to_str(8)
+            elsif e == 102
+                out = out + char_to_str(12)
+            elsif e == 34
+                out = out + char_to_str(34)
+            elsif e == 92
+                out = out + char_to_str(92)
+            elsif e == 47
+                out = out + char_to_str(47)
+            elsif e == 117
+                cp = jp_hex4(t, i)
+                if cp < 0
+                    x = vec_set(d, 8, i)
+                    x = jp_fail(d, "bad unicode escape")
+                    return ""
+                i = i + 4
+                if cp >= 55296
+                    if cp <= 56319
+                        if i + 1 < n
+                            if str_char(t, i) == 92
+                                if str_char(t, i + 1) == 117
+                                    lo = jp_hex4(t, i + 2)
+                                    if lo >= 56320
+                                        if lo <= 57343
+                                            cp = 65536 + ((cp - 55296) << 10) + (lo - 56320)
+                                            i = i + 6
+                out = out + jp_utf8(cp)
+            else
+                x = vec_set(d, 8, i)
+                x = jp_fail(d, "bad escape")
+                return ""
+            start = i
+        else
+            i = i + 1
+    x = vec_set(d, 8, n)
+    x = jp_fail(d, "unterminated string")
+    ""
+
+# Posición tras la racha de dígitos que empieza en p.
+fn jp_digits(t: String, p: Int) -> Int
+    n = str_len(t)
+    i = p
+    while i < n
+        c = str_char(t, i)
+        if c < 48
+            return i
+        if c > 57
+            return i
+        i = i + 1
+    i
+
+fn jp_number(d: Int, t: String) -> Int ! alloc
+    n = str_len(t)
+    start = vec_get(d, 8)
+    i = start
+    if i < n
+        if str_char(t, i) == 45
+            i = i + 1
+    ds = i
+    intend = jp_digits(t, i)
+    if intend == ds
+        return jp_fail(d, "invalid number")
+    i = intend
+    if i < n
+        if str_char(t, i) == 46
+            i = jp_digits(t, i + 1)
+    i = jp_exp(t, i)
+    jp_number_node(d, t, start, ds, intend, i)
+
+# Salta un exponente opcional (e/E, signo, dígitos) y devuelve la posición final.
+fn jp_exp(t: String, p: Int) -> Int
+    n = str_len(t)
+    i = p
+    if i >= n
+        return i
+    c = str_char(t, i)
+    if c != 101
+        if c != 69
+            return i
+    i = i + 1
+    if i < n
+        c = str_char(t, i)
+        if c == 43
+            i = i + 1
+        elsif c == 45
+            i = i + 1
+    jp_digits(t, i)
+
+fn jp_number_node(d: Int, t: String, start: Int, ds: Int, intend: Int, endp: Int) -> Int ! alloc
+    node = jn_new(d, 4)
+    raw = str_slice(t, start, endp)
+    x = vec_set(vec_get(d, 1), node, str_as_int(raw))
+    v = sk_parse_int(str_slice(t, ds, intend))
+    if ds > start
+        v = 0 - v
+    x = vec_set(vec_get(d, 2), node, v)
+    x = vec_set(d, 8, endp)
+    node
+
+fn jp_literal(d: Int, t: String, word: String, kind: Int) -> Int ! alloc
+    p = vec_get(d, 8)
+    wl = str_len(word)
+    if p + wl > str_len(t)
+        return jp_fail(d, "unexpected token")
+    i = 0
+    while i < wl
+        if str_char(t, p + i) != str_char(word, i)
+            return jp_fail(d, "unexpected token")
+        i = i + 1
+    x = vec_set(d, 8, p + wl)
+    jn_new(d, kind)
+
+fn jp_value(d: Int, t: String, depth: Int) -> Int ! alloc
+    if depth > 200
+        return jp_fail(d, "nesting too deep")
+    i = jp_ws(t, vec_get(d, 8))
+    x = vec_set(d, 8, i)
+    if i >= str_len(t)
+        return jp_fail(d, "unexpected end of input")
+    c = str_char(t, i)
+    if c == 123
+        return jp_object(d, t, depth)
+    if c == 91
+        return jp_array(d, t, depth)
+    if c == 34
+        s = jp_string(d, t)
+        if vec_get(d, 9) != 0
+            return 0 - 1
+        node = jn_new(d, 3)
+        x = vec_set(vec_get(d, 1), node, str_as_int(s))
+        return node
+    if c == 116
+        return jp_literal(d, t, "true", 2)
+    if c == 102
+        return jp_literal(d, t, "false", 1)
+    if c == 110
+        return jp_literal(d, t, "null", 0)
+    if c == 45
+        return jp_number(d, t)
+    if c >= 48
+        if c <= 57
+            return jp_number(d, t)
+    jp_fail(d, "unexpected character")
+
+fn jp_array(d: Int, t: String, depth: Int) -> Int ! alloc
+    node = jn_new(d, 5)
+    i = jp_ws(t, vec_get(d, 8) + 1)
+    x = vec_set(d, 8, i)
+    if i < str_len(t)
+        if str_char(t, i) == 93
+            x = vec_set(d, 8, i + 1)
+            return node
+    done = 0
+    while done == 0
+        child = jp_value(d, t, depth + 1)
+        if child < 0
+            return 0 - 1
+        x = jn_add(d, node, child)
+        i = jp_ws(t, vec_get(d, 8))
+        x = vec_set(d, 8, i)
+        if i >= str_len(t)
+            return jp_fail(d, "unterminated array")
+        c = str_char(t, i)
+        if c == 44
+            x = vec_set(d, 8, i + 1)
+        elsif c == 93
+            x = vec_set(d, 8, i + 1)
+            done = 1
+        else
+            return jp_fail(d, "expected , or ]")
+    node
+
+fn jp_object(d: Int, t: String, depth: Int) -> Int ! alloc
+    node = jn_new(d, 6)
+    i = jp_ws(t, vec_get(d, 8) + 1)
+    x = vec_set(d, 8, i)
+    if i < str_len(t)
+        if str_char(t, i) == 125
+            x = vec_set(d, 8, i + 1)
+            return node
+    done = 0
+    while done == 0
+        i = jp_ws(t, vec_get(d, 8))
+        x = vec_set(d, 8, i)
+        if i >= str_len(t)
+            return jp_fail(d, "unterminated object")
+        if str_char(t, i) != 34
+            return jp_fail(d, "expected string key")
+        key = jp_string(d, t)
+        if vec_get(d, 9) != 0
+            return 0 - 1
+        i = jp_ws(t, vec_get(d, 8))
+        x = vec_set(d, 8, i)
+        if i >= str_len(t)
+            return jp_fail(d, "unterminated object")
+        if str_char(t, i) != 58
+            return jp_fail(d, "expected :")
+        x = vec_set(d, 8, i + 1)
+        child = jp_value(d, t, depth + 1)
+        if child < 0
+            return 0 - 1
+        x = vec_set(vec_get(d, 6), child, str_as_int(key))
+        x = jn_add(d, node, child)
+        i = jp_ws(t, vec_get(d, 8))
+        x = vec_set(d, 8, i)
+        if i >= str_len(t)
+            return jp_fail(d, "unterminated object")
+        c = str_char(t, i)
+        if c == 44
+            x = vec_set(d, 8, i + 1)
+        elsif c == 125
+            x = vec_set(d, 8, i + 1)
+            done = 1
+        else
+            return jp_fail(d, "expected , or }")
+    node
+
+# Parsea `text` y devuelve el documento (siempre válido como asa; mira json_ok).
+fn json_parse(text: String) -> Int ! alloc
+    d = json_new_doc()
+    root = jp_value(d, text, 0)
+    x = vec_set(d, 7, root)
+    d

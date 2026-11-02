@@ -1,0 +1,385 @@
+# salkit/http.sal — cliente HTTP/1.1 en texto plano (sin TLS) para LAN y loopback.
+#
+# El resultado es un asa Int: http_status (0 si no hubo respuesta), http_body,
+# http_error ("" si todo fue bien), http_header(r, nombre) sin distinguir mayúsculas.
+# Una petición abre su propia conexión (Connection: close) y respeta un plazo total.
+
+import "io/io.sal"
+import "io/net.sal"
+import "io/time.sal"
+import "strbuf.sal"
+import "int.sal"
+
+fn http_status(r: Int) -> Int
+    vec_get(r, 0)
+
+fn http_body(r: Int) -> String
+    str_from_int(vec_get(r, 1))
+
+fn http_error(r: Int) -> String
+    str_from_int(vec_get(r, 2))
+
+# Cabeceras crudas de la respuesta (sin la línea de estado).
+fn http_headers_raw(r: Int) -> String
+    str_from_int(vec_get(r, 3))
+
+# 1 si la respuesta es 2xx.
+fn http_is_ok(r: Int) -> Int
+    s = vec_get(r, 0)
+    if s >= 200
+        if s < 300
+            return 1
+    0
+
+fn http_result(status: Int, body: String, err: String, headers: String) -> Int ! alloc
+    r = vec_new()
+    x = vec_push(r, status)
+    x = vec_push(r, str_as_int(body))
+    x = vec_push(r, str_as_int(err))
+    x = vec_push(r, str_as_int(headers))
+    r
+
+# Valor de una cabecera (primera coincidencia, sin distinguir mayúsculas); "" si no está.
+fn http_header_in(headers: String, name: String) -> String ! alloc
+    lines = sk_split_lines(headers)
+    want = sk_lower(name)
+    n = sk_sl_len(lines)
+    i = 0
+    while i < n
+        line = sk_sl_get(lines, i)
+        c = sk_index_of(line, ":")
+        if c > 0
+            if str_eq(sk_lower(str_slice(line, 0, c)), want) != 0
+                return sk_trim(str_slice(line, c + 1, str_len(line)))
+        i = i + 1
+    ""
+
+fn http_header(r: Int, name: String) -> String ! alloc
+    http_header_in(http_headers_raw(r), name)
+
+# Decodifica un cuerpo con Transfer-Encoding: chunked.
+fn http_dechunk(raw: String) -> String ! alloc
+    n = str_len(raw)
+    out = ""
+    i = 0
+    go = 1
+    while go != 0
+        e = sk_index_from(raw, "\r\n", i)
+        if e < 0
+            go = 0
+        else
+            size = sk_parse_hex(str_slice(raw, i, e))
+            if size <= 0
+                go = 0
+            else
+                start = e + 2
+                stop = start + size
+                if stop > n
+                    stop = n
+                out = out + str_slice(raw, start, stop)
+                i = stop + 2
+                if i >= n
+                    go = 0
+    out
+
+# Escribe todo `data` en el socket; 0 si ok.
+fn http_send_all(fd: Int, data: String) -> Int ! io, alloc
+    n = str_len(data)
+    buf = bytes_new(n)
+    x = str_bytes_copy(buf, 0, data)
+    pos = 0
+    while pos < n
+        k = write_fd(fd, bytes_ptr(buf) + pos, n - pos)
+        if k <= 0
+            return 1
+        pos = pos + k
+    0
+
+fn http_connect(host: String, port: Int, timeout_ms: Int) -> Int ! io, alloc
+    if str_eq(host, "127.0.0.1") != 0
+        return tcp_connect_loopback(port, timeout_ms)
+    if str_eq(host, "localhost") != 0
+        return tcp_connect_loopback(port, timeout_ms)
+    tcp_connect_host(host, port, timeout_ms)
+
+# Petición genérica. `extra_headers` son líneas "Nombre: valor" separadas por "\r\n"
+# (puede ser ""). `timeout_ms` es el plazo total; `max_bytes` limita la respuesta.
+fn http_request(method: String, host: String, port: Int, path: String, extra_headers: String, body: String, timeout_ms: Int, max_bytes: Int) -> Int ! io, alloc
+    fd = http_connect(host, port, 5000)
+    if fd < 0
+        return http_result(0, "", "connect failed to " + host + ":" + int_to_str(port), "")
+    req = method + " " + path + " HTTP/1.1\r\nHost: " + host + ":" + int_to_str(port) + "\r\nConnection: close\r\nAccept: */*\r\n"
+    if str_len(extra_headers) > 0
+        req = req + extra_headers + "\r\n"
+    if str_len(body) > 0
+        req = req + "Content-Length: " + int_to_str(str_len(body)) + "\r\n"
+    elsif str_eq(method, "POST") != 0
+        req = req + "Content-Length: 0\r\n"
+    req = req + "\r\n" + body
+    if http_send_all(fd, req) != 0
+        sc = close_fd(fd)
+        return http_result(0, "", "send failed", "")
+    deadline = uptime_ms() + timeout_ms
+    chunk = bytes_new(65536)
+    acc = ""
+    hend = 0 - 1
+    clen = 0 - 1
+    chunked = 0
+    timed_out = 0
+    go = 1
+    while go != 0
+        left = deadline - uptime_ms()
+        if left <= 0
+            timed_out = 1
+            go = 0
+        else
+            slice = left
+            if slice > 200
+                slice = 200
+            k = read_timeout_fd(fd, bytes_ptr(chunk), 65536, slice)
+            if k > 0
+                acc = acc + bytes_to_str(bytes_view(chunk, 0, k))
+                if hend < 0
+                    hend = sk_index_of(acc, "\r\n\r\n")
+                    if hend >= 0
+                        hdrs = str_slice(acc, 0, hend)
+                        cl = http_header_in(hdrs, "content-length")
+                        if str_len(cl) > 0
+                            clen = sk_parse_int(cl)
+                        if str_eq(sk_lower(http_header_in(hdrs, "transfer-encoding")), "chunked") != 0
+                            chunked = 1
+                if hend >= 0
+                    have = str_len(acc) - (hend + 4)
+                    if clen >= 0
+                        if have >= clen
+                            go = 0
+                    if chunked != 0
+                        if sk_ends_with(acc, "0\r\n\r\n") != 0
+                            go = 0
+                if str_len(acc) > max_bytes
+                    go = 0
+            elsif k == 0
+                go = 0
+            elsif k != 0 - 11
+                go = 0
+    sc2 = close_fd(fd)
+    if hend < 0
+        if timed_out != 0
+            return http_result(0, "", "timeout after " + int_to_str(timeout_ms) + " ms", "")
+        return http_result(0, "", "connection closed before a complete response", "")
+    head = str_slice(acc, 0, hend)
+    first_nl = sk_index_of(head, "\r\n")
+    status_line = str_slice(head, 0, str_len(head))
+    headers = ""
+    if first_nl >= 0
+        status_line = str_slice(head, 0, first_nl)
+        headers = str_slice(head, first_nl + 2, str_len(head))
+    sp = sk_index_of(status_line, " ")
+    status = 0
+    if sp >= 0
+        status = sk_parse_int(str_slice(status_line, sp + 1, str_len(status_line)))
+    payload = str_slice(acc, hend + 4, str_len(acc))
+    if chunked != 0
+        payload = http_dechunk(payload)
+    elsif clen >= 0
+        if str_len(payload) > clen
+            payload = str_slice(payload, 0, clen)
+    err = ""
+    if timed_out != 0
+        err = "timeout after " + int_to_str(timeout_ms) + " ms"
+    http_result(status, payload, err, headers)
+
+fn http_get(host: String, port: Int, path: String, extra_headers: String, timeout_ms: Int) -> Int ! io, alloc
+    http_request("GET", host, port, path, extra_headers, "", timeout_ms, 33554432)
+
+# POST con cuerpo JSON y token Bearer opcional (token "" = sin Authorization).
+fn http_post_json(host: String, port: Int, path: String, token: String, body: String, timeout_ms: Int) -> Int ! io, alloc
+    h = "Content-Type: application/json"
+    if str_len(token) > 0
+        h = h + "\r\nAuthorization: Bearer " + token
+    http_request("POST", host, port, path, h, body, timeout_ms, 33554432)
+
+# ------------------------------------------------------------------ respuestas en streaming
+#
+# hs_open abre la conexión, envía la petición y lee las cabeceras; el cuerpo se consume por líneas
+# con hs_next_line (cuerpo chunked o hasta el cierre, p. ej. text/event-stream). El plazo
+# `timeout_ms` es de inactividad: se renueva con cada dato recibido.
+# Asa (vec): 0 fd, 1 estado, 2 error, 3 cuerpo decodificado, 4 posición de lectura en él,
+# 5 chunked, 6 bytes crudos pendientes, 7 posición en ellos, 8 fin de datos, 9 inactividad (ms),
+# 10 cabeceras crudas.
+
+fn hs_status(h: Int) -> Int
+    vec_get(h, 1)
+
+fn hs_error(h: Int) -> String
+    str_from_int(vec_get(h, 2))
+
+fn hs_headers(h: Int) -> String
+    str_from_int(vec_get(h, 10))
+
+fn hs_new(fd: Int, status: Int, err: String, idle: Int) -> Int ! alloc
+    h = vec_new()
+    x = vec_push(h, fd)
+    x = vec_push(h, status)
+    x = vec_push(h, str_as_int(err))
+    x = vec_push(h, str_as_int(""))
+    x = vec_push(h, 0)
+    x = vec_push(h, 0)
+    x = vec_push(h, str_as_int(""))
+    x = vec_push(h, 0)
+    x = vec_push(h, 0)
+    x = vec_push(h, idle)
+    x = vec_push(h, str_as_int(""))
+    h
+
+# Decodifica los chunks completos que haya en el búfer crudo y los añade al cuerpo.
+fn hs_decode(h: Int) -> Int ! alloc
+    raw = str_from_int(vec_get(h, 6))
+    rp = vec_get(h, 7)
+    dec = str_from_int(vec_get(h, 3))
+    n = str_len(raw)
+    go = 1
+    while go != 0
+        e = sk_index_from(raw, "\r\n", rp)
+        if e < 0
+            go = 0
+        else
+            size = sk_parse_hex(str_slice(raw, rp, e))
+            if size <= 0
+                x = vec_set(h, 8, 1)
+                go = 0
+            elsif e + 2 + size + 2 > n
+                go = 0
+            else
+                dec = dec + str_slice(raw, e + 2, e + 2 + size)
+                rp = e + 2 + size + 2
+    x = vec_set(h, 3, str_as_int(dec))
+    vec_set(h, 7, rp)
+
+# Lee más datos del socket (espera hasta 200 ms). Devuelve 0 si ya no hay más.
+fn hs_pump(h: Int) -> Int ! io, alloc
+    if vec_get(h, 8) != 0
+        return 0
+    fd = vec_get(h, 0)
+    chunk = bytes_new(65536)
+    waited = 0
+    while waited < vec_get(h, 9)
+        k = read_timeout_fd(fd, bytes_ptr(chunk), 65536, 200)
+        if k > 0
+            piece = bytes_to_str(bytes_view(chunk, 0, k))
+            if vec_get(h, 5) != 0
+                x = vec_set(h, 6, str_as_int(str_from_int(vec_get(h, 6)) + piece))
+                y = hs_decode(h)
+            else
+                x = vec_set(h, 3, str_as_int(str_from_int(vec_get(h, 3)) + piece))
+            return 1
+        elsif k == 0
+            x = vec_set(h, 8, 1)
+            return 0
+        elsif k != 0 - 11
+            x = vec_set(h, 8, 1)
+            return 0
+        waited = waited + 200
+    x = vec_set(h, 2, str_as_int("timeout: no data for " + int_to_str(vec_get(h, 9)) + " ms"))
+    x = vec_set(h, 8, 1)
+    0
+
+# Abre una petición POST JSON y lee las cabeceras. hs_status es 0 si falló (ver hs_error).
+fn hs_open(host: String, port: Int, path: String, token: String, body: String, timeout_ms: Int) -> Int ! io, alloc
+    fd = http_connect(host, port, 5000)
+    if fd < 0
+        return hs_new(0 - 1, 0, "connect failed to " + host + ":" + int_to_str(port), timeout_ms)
+    req = "POST " + path + " HTTP/1.1\r\nHost: " + host + ":" + int_to_str(port) + "\r\nConnection: close\r\nAccept: text/event-stream\r\nContent-Type: application/json\r\n"
+    if str_len(token) > 0
+        req = req + "Authorization: Bearer " + token + "\r\n"
+    req = req + "Content-Length: " + int_to_str(str_len(body)) + "\r\n\r\n" + body
+    if http_send_all(fd, req) != 0
+        sc = close_fd(fd)
+        return hs_new(0 - 1, 0, "send failed", timeout_ms)
+    h = hs_new(fd, 0, "", timeout_ms)
+    acc = ""
+    hend = 0 - 1
+    chunk = bytes_new(65536)
+    waited = 0
+    while hend < 0
+        if waited >= timeout_ms
+            x = vec_set(h, 2, str_as_int("timeout waiting for response headers"))
+            hend = 0 - 2
+        else
+            k = read_timeout_fd(fd, bytes_ptr(chunk), 65536, 200)
+            if k > 0
+                acc = acc + bytes_to_str(bytes_view(chunk, 0, k))
+                hend = sk_index_of(acc, "\r\n\r\n")
+            elsif k == 0
+                x = vec_set(h, 2, str_as_int("connection closed before response headers"))
+                hend = 0 - 2
+            elsif k != 0 - 11
+                x = vec_set(h, 2, str_as_int("read error"))
+                hend = 0 - 2
+            else
+                waited = waited + 200
+    if hend < 0
+        x = vec_set(h, 8, 1)
+        return h
+    head = str_slice(acc, 0, hend)
+    first_nl = sk_index_of(head, "\r\n")
+    status_line = str_slice(head, 0, str_len(head))
+    headers = ""
+    if first_nl >= 0
+        status_line = str_slice(head, 0, first_nl)
+        headers = str_slice(head, first_nl + 2, str_len(head))
+    sp = sk_index_of(status_line, " ")
+    if sp >= 0
+        x = vec_set(h, 1, sk_parse_int(str_slice(status_line, sp + 1, str_len(status_line))))
+    x = vec_set(h, 10, str_as_int(headers))
+    payload = str_slice(acc, hend + 4, str_len(acc))
+    if str_eq(sk_lower(http_header_in(headers, "transfer-encoding")), "chunked") != 0
+        x = vec_set(h, 5, 1)
+        x = vec_set(h, 6, str_as_int(payload))
+        y = hs_decode(h)
+    else
+        x = vec_set(h, 3, str_as_int(payload))
+    h
+
+# Siguiente línea del cuerpo sin el salto; char 4 si se acabaron los datos.
+fn hs_next_line(h: Int) -> String ! io, alloc
+    result = ""
+    done = 0
+    while done == 0
+        dec = str_from_int(vec_get(h, 3))
+        pos = vec_get(h, 4)
+        e = sk_index_from(dec, "\n", pos)
+        if e >= 0
+            ln = str_slice(dec, pos, e)
+            if str_len(ln) > 0
+                if str_char(ln, str_len(ln) - 1) == 13
+                    ln = str_slice(ln, 0, str_len(ln) - 1)
+            x = vec_set(h, 4, e + 1)
+            result = ln
+            done = 1
+        else
+            more = hs_pump(h)
+            if more == 0
+                dec2 = str_from_int(vec_get(h, 3))
+                pos2 = vec_get(h, 4)
+                if pos2 < str_len(dec2)
+                    result = str_slice(dec2, pos2, str_len(dec2))
+                    x = vec_set(h, 4, str_len(dec2))
+                else
+                    result = char_to_str(4)
+                done = 1
+    result
+
+# Todo lo que queda del cuerpo (para leer un error completo).
+fn hs_read_rest(h: Int) -> String ! io, alloc
+    more = 1
+    while more != 0
+        more = hs_pump(h)
+    dec = str_from_int(vec_get(h, 3))
+    str_slice(dec, vec_get(h, 4), str_len(dec))
+
+fn hs_close(h: Int) -> Int ! io
+    fd = vec_get(h, 0)
+    if fd >= 0
+        return close_fd(fd)
+    0

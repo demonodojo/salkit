@@ -1,0 +1,17 @@
+import "io/io.sal"
+
+fn ck_fail(code: Int, got: String, want: String) -> Int ! io, alloc
+    _w = write_str_fd(2, "FAIL #" + int_to_str(code) + " got=[" + got + "] want=[" + want + "]\n")
+    1
+
+fn ck_int(got: Int, want: Int, code: Int) -> Int ! io, alloc
+    if got == want
+        0
+    else
+        ck_fail(code, int_to_str(got), int_to_str(want))
+
+fn ck_str(got: String, want: String, code: Int) -> Int ! io, alloc
+    if str_eq(got, want) != 0
+        0
+    else
+        ck_fail(code, got, want)

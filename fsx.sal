@@ -1,0 +1,171 @@
+# salkit/fsx.sal — ficheros y directorios con comprobación de errores.
+# (en soso `read_file` hace panic si el fichero no existe; aquí se comprueba antes.)
+
+import "io/io.sal"
+import "io/abi.sal"
+import "io/fs.sal"
+import "strbuf.sal"
+
+fn fsx_exists(path: String) -> Int ! io, alloc
+    if stat_file_size(path) >= 0
+        1
+    else
+        0
+
+fn fsx_is_dir(path: String) -> Int ! io, alloc
+    is_dir(path)
+
+fn fsx_is_file(path: String) -> Int ! io, alloc
+    if stat_file_size(path) < 0
+        return 0
+    if is_dir(path) != 0
+        return 0
+    1
+
+# Tamaño en bytes o -1.
+fn fsx_size(path: String) -> Int ! io, alloc
+    stat_file_size(path)
+
+# Lee hasta `max` bytes. Fichero ausente, directorio o error -> Bytes vacío.
+fn fsx_read_bytes_max(path: String, max: Int) -> Bytes ! io, alloc
+    size = stat_file_size(path)
+    if size <= 0
+        return bytes_new(0)
+    if size > max
+        size = max
+    fd = open_read(path)
+    if fd < 0
+        return bytes_new(0)
+    buf = bytes_new(size)
+    pos = 0
+    go = 1
+    while go != 0
+        if pos >= size
+            go = 0
+        else
+            k = read_fd(fd, bytes_ptr(buf) + pos, size - pos)
+            if k <= 0
+                go = 0
+            else
+                pos = pos + k
+    x = close_fd(fd)
+    bytes_view(buf, 0, pos)
+
+fn fsx_read_bytes(path: String) -> Bytes ! io, alloc
+    fsx_read_bytes_max(path, 268435456)
+
+fn fsx_read_text_max(path: String, max: Int) -> String ! io, alloc
+    b = fsx_read_bytes_max(path, max)
+    n = bytes_len(b)
+    if n <= 0
+        return ""
+    bytes_to_str(b)
+
+fn fsx_read_text(path: String) -> String ! io, alloc
+    fsx_read_text_max(path, 268435456)
+
+# Escribe todo `data` en `fd` (varios write si hace falta). 0 si ok, 1 si error.
+fn fsx_write_fd(fd: Int, data: String) -> Int ! io, alloc
+    n = str_len(data)
+    if n <= 0
+        return 0
+    buf = bytes_new(n)
+    x = str_bytes_copy(buf, 0, data)
+    pos = 0
+    while pos < n
+        k = write_fd(fd, bytes_ptr(buf) + pos, n - pos)
+        if k <= 0
+            return 1
+        pos = pos + k
+    0
+
+fn fsx_open_write(path: String, flags: Int) -> Int ! io, alloc
+    parent = path_parent(path)
+    if str_len(parent) > 0
+        x = mkdir_p(parent)
+    b = path_to_buf(path)
+    open_flags(bytes_ptr(b), str_len(path), flags)
+
+# Crea los directorios que falten y sobrescribe el fichero. 0 si ok.
+fn fsx_write(path: String, data: String) -> Int ! io, alloc
+    fd = fsx_open_write(path, o_WRONLY() + o_CREAT() + o_TRUNC())
+    if fd < 0
+        return 1
+    r = fsx_write_fd(fd, data)
+    x = close_fd(fd)
+    r
+
+fn fsx_append(path: String, data: String) -> Int ! io, alloc
+    fd = fsx_open_write(path, o_WRONLY() + o_CREAT() + o_APPEND())
+    if fd < 0
+        return 1
+    r = fsx_write_fd(fd, data)
+    x = close_fd(fd)
+    r
+
+fn fsx_remove(path: String) -> Int ! io, alloc
+    b = path_to_buf(path)
+    unlink_path_ptr(bytes_ptr(b), str_len(path))
+
+# Entradas de un directorio ordenadas; los subdirectorios llevan "/" final.
+fn fsx_list_dir(dir: String) -> Int ! io, alloc
+    sl = vec_new()
+    fd = open_read(dir)
+    if fd < 0
+        return sl
+    buf = bytes_new(dirent_size())
+    go = 1
+    while go != 0
+        got = getdents_fd(fd, bytes_ptr(buf), dirent_size())
+        if got <= 0
+            go = 0
+        else
+            nl = bytes_get_u8(buf, dirent_off_name_len())
+            if nl > 0
+                name = bytes_to_str(bytes_view(buf, dirent_off_name(), nl))
+                dot = 0
+                if str_eq(name, ".") != 0
+                    dot = 1
+                if str_eq(name, "..") != 0
+                    dot = 1
+                if dot == 0
+                    if bytes_get_u8(buf, dirent_off_file_type()) == ft_dir()
+                        name = name + "/"
+                    x = vec_push(sl, str_as_int(name))
+    x = close_fd(fd)
+    x = sk_sl_sort(sl)
+    sl
+
+# Rutas de fichero bajo `root`, relativas a él y ordenadas. `ignores` es una lista de
+# nombres base (ficheros o directorios) que se saltan. Para en `max` resultados.
+fn fsx_walk(root: String, ignores: Int, max: Int) -> Int ! io, alloc
+    out = vec_new()
+    x = fsx_walk_into(out, root, "", ignores, max)
+    x = sk_sl_sort(out)
+    out
+
+fn fsx_walk_into(out: Int, root: String, rel: String, ignores: Int, max: Int) -> Int ! io, alloc
+    dir = str_slice(root, 0, str_len(root))
+    if str_len(rel) > 0
+        dir = root + "/" + rel
+    names = fsx_list_dir(dir)
+    n = vec_len(names)
+    i = 0
+    while i < n
+        if vec_len(out) >= max
+            return 0
+        name = sk_sl_get(names, i)
+        isdir = sk_ends_with(name, "/")
+        base = str_slice(name, 0, str_len(name))
+        if isdir != 0
+            base = str_slice(name, 0, str_len(name) - 1)
+        if sk_sl_contains(ignores, base) == 0
+            relp = str_slice(base, 0, str_len(base))
+            if str_len(rel) > 0
+                relp = rel + "/" + base
+            if isdir != 0
+                x = fsx_walk_into(out, root, relp, ignores, max)
+            else
+                x = vec_push(out, str_as_int(relp))
+        i = i + 1
+    0

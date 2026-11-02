@@ -1,0 +1,244 @@
+# salkit/glob.sal — patrones glob sobre rutas con "/" como separador.
+#   *  cualquier texto sin "/"      **  cualquier texto, incluido "/"
+#   ?  un carácter sin "/"          [abc] [a-z] [!abc]  clases
+#   {a,b}  alternativas (anidables)  \x  carácter literal
+
+import "strbuf.sal"
+
+# Fin de la alternativa que empieza tras "{" en pat[p]: posición de "}" que cierra, o -1.
+fn gl_brace_close(pat: String, p: Int) -> Int
+    n = str_len(pat)
+    depth = 1
+    i = p
+    while i < n
+        c = str_char(pat, i)
+        if c == 92
+            i = i + 1
+        elsif c == 123
+            depth = depth + 1
+        elsif c == 125
+            depth = depth - 1
+            if depth == 0
+                return i
+        i = i + 1
+    0 - 1
+
+# Expande las llaves {a,b} en una lista de patrones sin llaves.
+fn glob_expand(pat: String) -> Int ! alloc
+    out = vec_new()
+    gl_expand_into(out, pat)
+    out
+
+fn gl_expand_into(out: Int, pat: String) -> Int ! alloc
+    n = str_len(pat)
+    i = 0
+    while i < n
+        c = str_char(pat, i)
+        if c == 92
+            i = i + 2
+        elsif c == 123
+            close = gl_brace_close(pat, i + 1)
+            if close < 0
+                x = vec_push(out, str_as_int(str_slice(pat, 0, n)))
+                return 0
+            pre = str_slice(pat, 0, i)
+            post = str_slice(pat, close + 1, n)
+            inner = str_slice(pat, i + 1, close)
+            return gl_expand_alts(out, pre, inner, post)
+        else
+            i = i + 1
+    x = vec_push(out, str_as_int(str_slice(pat, 0, n)))
+    0
+
+# Reparte `inner` por comas de nivel 0 y expande cada alternativa recursivamente.
+fn gl_expand_alts(out: Int, pre: String, inner: String, post: String) -> Int ! alloc
+    n = str_len(inner)
+    depth = 0
+    start = 0
+    i = 0
+    while i < n
+        c = str_char(inner, i)
+        if c == 92
+            i = i + 1
+        elsif c == 123
+            depth = depth + 1
+        elsif c == 125
+            depth = depth - 1
+        elsif c == 44
+            if depth == 0
+                x = gl_expand_into(out, pre + str_slice(inner, start, i) + post)
+                start = i + 1
+        i = i + 1
+    gl_expand_into(out, pre + str_slice(inner, start, n) + post)
+
+# Compara una clase [..] que empieza en pat[pi] ("[") con el byte c.
+# Devuelve (nuevo pi) si casa, -(nuevo pi) - 1 si la clase es válida pero no casa,
+# y -1000000 si la clase no está cerrada.
+fn gl_class(pat: String, pi: Int, c: Int) -> Int
+    n = str_len(pat)
+    i = pi + 1
+    neg = 0
+    if i < n
+        if str_char(pat, i) == 33
+            neg = 1
+            i = i + 1
+        elsif str_char(pat, i) == 94
+            neg = 1
+            i = i + 1
+    hit = 0
+    first = 1
+    while i < n
+        d = str_char(pat, i)
+        if d == 93
+            if first == 0
+                ok = hit
+                if neg != 0
+                    if hit == 0
+                        ok = 1
+                    else
+                        ok = 0
+                if ok != 0
+                    return i + 1
+                return 0 - (i + 1) - 1
+        first = 0
+        lo = d
+        if d == 92
+            if i + 1 < n
+                i = i + 1
+                lo = str_char(pat, i)
+        if i + 2 < n
+            if str_char(pat, i + 1) == 45
+                if str_char(pat, i + 2) != 93
+                    hi = str_char(pat, i + 2)
+                    if c >= lo
+                        if c <= hi
+                            hit = 1
+                    i = i + 3
+                else
+                    if c == lo
+                        hit = 1
+                    i = i + 1
+            else
+                if c == lo
+                    hit = 1
+                i = i + 1
+        else
+            if c == lo
+                hit = 1
+            i = i + 1
+    0 - 1000000
+
+# Casa pat[pi..] con s[si..] (sin llaves; usa glob_match para el patrón completo).
+fn gl_rec(pat: String, pi: Int, s: String, si: Int) -> Int
+    pn = str_len(pat)
+    sn = str_len(s)
+    p = pi
+    q = si
+    while p < pn
+        c = str_char(pat, p)
+        if c == 42
+            if p + 1 < pn
+                if str_char(pat, p + 1) == 42
+                    return gl_star2(pat, p + 2, s, q)
+            return gl_star1(pat, p + 1, s, q)
+        if c == 63
+            if q >= sn
+                return 0
+            if str_char(s, q) == 47
+                return 0
+            p = p + 1
+            q = q + 1
+        elsif c == 91
+            if q >= sn
+                return 0
+            r = gl_class(pat, p, str_char(s, q))
+            if r == 0 - 1000000
+                if str_char(s, q) != 91
+                    return 0
+                p = p + 1
+                q = q + 1
+            elsif r < 0
+                return 0
+            else
+                p = r
+                q = q + 1
+        else
+            lit = c
+            if c == 92
+                if p + 1 < pn
+                    p = p + 1
+                    lit = str_char(pat, p)
+            if q >= sn
+                return 0
+            if str_char(s, q) != lit
+                return 0
+            p = p + 1
+            q = q + 1
+    if q == sn
+        return 1
+    0
+
+# "*": consume 0..n caracteres sin "/".
+fn gl_star1(pat: String, pi: Int, s: String, si: Int) -> Int
+    sn = str_len(s)
+    k = si
+    while k <= sn
+        if gl_rec(pat, pi, s, k) != 0
+            return 1
+        if k >= sn
+            return 0
+        if str_char(s, k) == 47
+            return 0
+        k = k + 1
+    0
+
+# "**": consume cualquier cosa; "**/" también casa con cero directorios.
+fn gl_star2(pat: String, pi: Int, s: String, si: Int) -> Int
+    pn = str_len(pat)
+    sn = str_len(s)
+    after = pi
+    slash = 0
+    if pi < pn
+        if str_char(pat, pi) == 47
+            slash = 1
+            after = pi + 1
+    k = si
+    while k <= sn
+        if slash == 0
+            if gl_rec(pat, after, s, k) != 0
+                return 1
+        else
+            if k == si
+                if gl_rec(pat, after, s, k) != 0
+                    return 1
+            elsif str_char(s, k - 1) == 47
+                if gl_rec(pat, after, s, k) != 0
+                    return 1
+        k = k + 1
+    0
+
+# 1 si la ruta `s` casa con el glob `pat` (admite llaves).
+fn glob_match(pat: String, s: String) -> Int ! alloc
+    if sk_index_of(pat, char_to_str(123)) < 0
+        return gl_rec(pat, 0, s, 0)
+    alts = glob_expand(pat)
+    n = vec_len(alts)
+    i = 0
+    while i < n
+        if gl_rec(str_from_int(vec_get(alts, i)), 0, s, 0) != 0
+            return 1
+        i = i + 1
+    0
+
+# Como glob_match, pero un patrón sin "/" se compara con el nombre base (como --include).
+fn glob_match_name(pat: String, path: String) -> Int ! alloc
+    if sk_index_of(pat, "/") >= 0
+        return glob_match(pat, path)
+    last = 0 - 1
+    i = 0
+    n = str_len(path)
+    while i < n
+        if str_char(path, i) == 47
+            last = i
+        i = i + 1
+    glob_match(pat, str_slice(path, last + 1, n))

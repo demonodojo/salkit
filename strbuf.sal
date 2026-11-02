@@ -1,0 +1,286 @@
+# salkit/strbuf.sal — utilidades de cadena que no reservan memoria por posición.
+# Una lista de cadenas ("sl") es un asa Int (vec con punteros a String).
+
+fn sk_sl_new() -> Int ! alloc
+    vec_new()
+
+fn sk_sl_push(sl: Int, s: String) -> Int
+    vec_push(sl, str_as_int(s))
+
+fn sk_sl_len(sl: Int) -> Int
+    vec_len(sl)
+
+fn sk_sl_get(sl: Int, i: Int) -> String
+    str_from_int(vec_get(sl, i))
+
+# Posición de `needle` en `hay` desde `start`, o -1. No reserva memoria.
+fn sk_index_from(hay: String, needle: String, start: Int) -> Int
+    hn = str_len(hay)
+    nn = str_len(needle)
+    i = start
+    if i < 0
+        i = 0
+    if nn <= 0
+        return i
+    last = hn - nn
+    first = str_char(needle, 0)
+    while i <= last
+        if str_char(hay, i) == first
+            j = 1
+            while j < nn
+                if str_char(hay, i + j) != str_char(needle, j)
+                    j = nn + 1
+                else
+                    j = j + 1
+            if j == nn
+                return i
+        i = i + 1
+    0 - 1
+
+fn sk_index_of(hay: String, needle: String) -> Int
+    sk_index_from(hay, needle, 0)
+
+fn sk_contains(hay: String, needle: String) -> Int
+    if sk_index_from(hay, needle, 0) >= 0
+        1
+    else
+        0
+
+fn sk_starts_with(s: String, prefix: String) -> Int
+    pn = str_len(prefix)
+    if pn > str_len(s)
+        return 0
+    i = 0
+    while i < pn
+        if str_char(s, i) != str_char(prefix, i)
+            return 0
+        i = i + 1
+    1
+
+fn sk_ends_with(s: String, suffix: String) -> Int
+    sn = str_len(suffix)
+    off = str_len(s) - sn
+    if off < 0
+        return 0
+    i = 0
+    while i < sn
+        if str_char(s, off + i) != str_char(suffix, i)
+            return 0
+        i = i + 1
+    1
+
+# Cuenta ocurrencias (sin solapar) de `needle`.
+fn sk_count(hay: String, needle: String) -> Int
+    nn = str_len(needle)
+    if nn <= 0
+        return 0
+    n = 0
+    i = sk_index_from(hay, needle, 0)
+    while i >= 0
+        n = n + 1
+        i = sk_index_from(hay, needle, i + nn)
+    n
+
+fn sk_is_space(c: Int) -> Int
+    if c == 32
+        return 1
+    if c == 9
+        return 1
+    if c == 10
+        return 1
+    if c == 13
+        return 1
+    0
+
+fn sk_trim(s: String) -> String ! alloc
+    n = str_len(s)
+    a = 0
+    while a < n
+        if sk_is_space(str_char(s, a)) == 0
+            return sk_trim_end(s, a)
+        a = a + 1
+    ""
+
+fn sk_trim_end(s: String, a: Int) -> String ! alloc
+    b = str_len(s)
+    while b > a
+        if sk_is_space(str_char(s, b - 1)) == 0
+            return str_slice(s, a, b)
+        b = b - 1
+    ""
+
+fn sk_lower(s: String) -> String ! alloc
+    out = ""
+    n = str_len(s)
+    i = 0
+    while i < n
+        c = str_char(s, i)
+        if c >= 65
+            if c <= 90
+                c = c + 32
+        out = out + char_to_str(c)
+        i = i + 1
+    out
+
+# Sustituye todas las apariciones de `old` por `new`.
+fn sk_replace_all(s: String, old: String, new: String) -> String ! alloc
+    olen = str_len(old)
+    if olen <= 0
+        return str_slice(s, 0, str_len(s))
+    out = ""
+    pos = 0
+    i = sk_index_from(s, old, 0)
+    while i >= 0
+        out = out + str_slice(s, pos, i) + new
+        pos = i + olen
+        i = sk_index_from(s, old, pos)
+    out = out + str_slice(s, pos, str_len(s))
+    out
+
+# Número de líneas (una última línea sin salto final también cuenta).
+fn sk_count_lines(s: String) -> Int
+    n = str_len(s)
+    if n <= 0
+        return 0
+    c = 0
+    i = 0
+    while i < n
+        if str_char(s, i) == 10
+            c = c + 1
+        i = i + 1
+    if str_char(s, n - 1) != 10
+        c = c + 1
+    c
+
+# Divide en líneas (sin \n ni \r final) y devuelve una lista de cadenas.
+fn sk_split_lines(s: String) -> Int ! alloc
+    sl = vec_new()
+    n = str_len(s)
+    start = 0
+    i = 0
+    while i < n
+        if str_char(s, i) == 10
+            e = i
+            if e > start
+                if str_char(s, e - 1) == 13
+                    e = e - 1
+            x = vec_push(sl, str_as_int(str_slice(s, start, e)))
+            start = i + 1
+        i = i + 1
+    if start < n
+        e = n
+        if str_char(s, e - 1) == 13
+            e = e - 1
+        x = vec_push(sl, str_as_int(str_slice(s, start, e)))
+    sl
+
+# Divide por un separador de un solo carácter (código `sep`); conserva campos vacíos.
+fn sk_split_char(s: String, sep: Int) -> Int ! alloc
+    sl = vec_new()
+    n = str_len(s)
+    start = 0
+    i = 0
+    while i < n
+        if str_char(s, i) == sep
+            x = vec_push(sl, str_as_int(str_slice(s, start, i)))
+            start = i + 1
+        i = i + 1
+    x = vec_push(sl, str_as_int(str_slice(s, start, n)))
+    sl
+
+fn sk_join(sl: Int, sep: String) -> String ! alloc
+    out = ""
+    n = vec_len(sl)
+    i = 0
+    while i < n
+        if i > 0
+            out = out + sep
+        out = out + str_from_int(vec_get(sl, i))
+        i = i + 1
+    out
+
+# Comparación byte a byte: -1, 0 o 1.
+fn sk_str_cmp(a: String, b: String) -> Int
+    na = str_len(a)
+    nb = str_len(b)
+    m = na
+    if nb < m
+        m = nb
+    i = 0
+    while i < m
+        ca = str_char(a, i)
+        cb = str_char(b, i)
+        if ca < cb
+            return 0 - 1
+        if ca > cb
+            return 1
+        i = i + 1
+    if na < nb
+        return 0 - 1
+    if na > nb
+        return 1
+    0
+
+# 1 si la lista contiene exactamente `s`.
+fn sk_sl_contains(sl: Int, s: String) -> Int
+    n = vec_len(sl)
+    i = 0
+    while i < n
+        if str_eq(str_from_int(vec_get(sl, i)), s) != 0
+            return 1
+        i = i + 1
+    0
+
+# Ordena la lista de cadenas en su sitio (merge sort ascendente por bytes).
+fn sk_sl_sort(sl: Int) -> Int ! alloc
+    n = vec_len(sl)
+    if n < 2
+        return 0
+    tmp = vec_new()
+    z = 0
+    while z < n
+        x = vec_push(tmp, 0)
+        z = z + 1
+    width = 1
+    while width < n
+        lo = 0
+        while lo < n
+            mid = lo + width
+            if mid > n
+                mid = n
+            hi = lo + width * 2
+            if hi > n
+                hi = n
+            i = lo
+            j = mid
+            k = lo
+            while k < hi
+                take_left = 0
+                if i < mid
+                    if j >= hi
+                        take_left = 1
+                    elsif sk_str_cmp(str_from_int(vec_get(sl, i)), str_from_int(vec_get(sl, j))) <= 0
+                        take_left = 1
+                if take_left != 0
+                    x = vec_set(tmp, k, vec_get(sl, i))
+                    i = i + 1
+                else
+                    x = vec_set(tmp, k, vec_get(sl, j))
+                    j = j + 1
+                k = k + 1
+            c = lo
+            while c < hi
+                x = vec_set(sl, c, vec_get(tmp, c))
+                c = c + 1
+            lo = lo + width * 2
+        width = width * 2
+    0
+
+# Recorta `s` a `max` bytes conservando cabeza y cola, con un aviso en medio.
+fn sk_truncate_middle(s: String, max: Int) -> String ! alloc
+    n = str_len(s)
+    if n <= max
+        return str_slice(s, 0, n)
+    head = max * 6 / 10
+    tail = max - head
+    str_slice(s, 0, head) + char_to_str(10) + "... [" + int_to_str(n - max) + " bytes truncated] ..." + char_to_str(10) + str_slice(s, n - tail, n)

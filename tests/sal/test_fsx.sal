@@ -1,0 +1,34 @@
+import "../../fsx.sal"
+import "../../strbuf.sal"
+import "support/assert.sal"
+
+fn main() -> Int ! io, alloc
+    f = 0
+    root = "target/fsx-test"
+    x = fsx_remove(root + "/a.txt")
+    x = fsx_remove(root + "/sub/deep/b.txt")
+    x = fsx_remove(root + "/sub/c.log")
+    f = f + ck_int(fsx_write(root + "/a.txt", "hello\nworld\n"), 0, 1)
+    f = f + ck_int(fsx_write(root + "/sub/deep/b.txt", "bbb"), 0, 2)
+    f = f + ck_int(fsx_write(root + "/sub/c.log", "c"), 0, 3)
+    f = f + ck_str(fsx_read_text(root + "/a.txt"), "hello\nworld\n", 4)
+    f = f + ck_int(fsx_append(root + "/a.txt", "more"), 0, 5)
+    f = f + ck_str(fsx_read_text(root + "/a.txt"), "hello\nworld\nmore", 6)
+    f = f + ck_int(fsx_size(root + "/a.txt"), 16, 7)
+    f = f + ck_int(fsx_exists(root + "/nope"), 0, 8)
+    f = f + ck_str(fsx_read_text(root + "/nope"), "", 9)
+    f = f + ck_int(bytes_len(fsx_read_bytes(root + "/nope")), 0, 10)
+    f = f + ck_int(fsx_is_dir(root + "/sub"), 1, 11)
+    f = f + ck_int(fsx_is_file(root + "/sub"), 0, 12)
+    f = f + ck_int(fsx_is_file(root + "/a.txt"), 1, 13)
+    f = f + ck_str(fsx_read_text_max(root + "/a.txt", 5), "hello", 14)
+    names = fsx_list_dir(root)
+    f = f + ck_str(sk_join(names, ","), "a.txt,sub/", 15)
+    ign = vec_new()
+    all = fsx_walk(root, ign, 100)
+    f = f + ck_str(sk_join(all, ","), "a.txt,sub/c.log,sub/deep/b.txt", 16)
+    x = vec_push(ign, str_as_int("deep"))
+    f = f + ck_str(sk_join(fsx_walk(root, ign, 100), ","), "a.txt,sub/c.log", 17)
+    f = f + ck_int(vec_len(fsx_walk(root, vec_new(), 2)), 2, 18)
+    f = f + ck_int(vec_len(fsx_list_dir(root + "/missing")), 0, 19)
+    f

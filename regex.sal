@@ -1,0 +1,792 @@
+# salkit/regex.sal — expresiones regulares (NFA tipo Pike, tiempo lineal, sin backtracking).
+#
+# Sintaxis: literales . [abc] [a-z] [^x] \d \w \s \D \W \S \b \B ^ $ | ( ) (?: )
+#           * + ? {n} {n,} {n,m} (y sus variantes perezosas, que se tratan como voraces).
+# Semántica: el primer inicio posible (más a la izquierda) con la coincidencia más larga.
+# El texto se trata como una sola línea: ^ y $ son el inicio y el final del texto.
+
+import "strbuf.sal"
+import "int.sal"
+
+# Ranuras del asa: 0 ops, 1 xs, 2 ys, 3 icase, 4 firstset, 5 nullable, 6 end,
+# 7 clases, 8 err, 9 ppos, 10 marks, 11 lista A, 12 lista B, 13 gen, 14 ast.
+
+fn regex_ok(re: Int) -> Int
+    if vec_get(re, 8) == 0
+        1
+    else
+        0
+
+fn regex_error(re: Int) -> String
+    if vec_get(re, 8) == 0
+        ""
+    else
+        str_from_int(vec_get(re, 8))
+
+# Fin de la última coincidencia encontrada con regex_find.
+fn regex_end(re: Int) -> Int
+    vec_get(re, 6)
+
+# ---------------------------------------------------------------- AST
+
+# Nodos: 1 CHAR(a), 2 ANY, 3 CLASS(a), 4 BOL, 5 EOL, 6 WB, 7 NWB, 8 GROUP(first),
+# 9 CAT(hijos), 10 ALT(a,b), 11 REPEAT(a,min=b,max=c), 12 EMPTY.
+fn rxa_new(ast: Int, kind: Int, a: Int, b: Int, c: Int) -> Int
+    id = vec_len(vec_get(ast, 0))
+    x = vec_push(vec_get(ast, 0), kind)
+    x = vec_push(vec_get(ast, 1), a)
+    x = vec_push(vec_get(ast, 2), b)
+    x = vec_push(vec_get(ast, 3), c)
+    x = vec_push(vec_get(ast, 4), 0 - 1)
+    x = vec_push(vec_get(ast, 5), 0 - 1)
+    x = vec_push(vec_get(ast, 6), 0 - 1)
+    id
+
+fn rxa_add(ast: Int, parent: Int, child: Int) -> Int
+    last = vec_get(vec_get(ast, 5), parent)
+    if last < 0
+        x = vec_set(vec_get(ast, 4), parent, child)
+    else
+        x = vec_set(vec_get(ast, 6), last, child)
+    x = vec_set(vec_get(ast, 5), parent, child)
+    child
+
+fn rxa_kind(ast: Int, n: Int) -> Int
+    vec_get(vec_get(ast, 0), n)
+
+fn rxa_a(ast: Int, n: Int) -> Int
+    vec_get(vec_get(ast, 1), n)
+
+fn rxa_b(ast: Int, n: Int) -> Int
+    vec_get(vec_get(ast, 2), n)
+
+fn rxa_c(ast: Int, n: Int) -> Int
+    vec_get(vec_get(ast, 3), n)
+
+fn rxa_first(ast: Int, n: Int) -> Int
+    vec_get(vec_get(ast, 4), n)
+
+fn rxa_next(ast: Int, n: Int) -> Int
+    vec_get(vec_get(ast, 6), n)
+
+# ---------------------------------------------------------------- clases
+
+fn rx_is_word(c: Int) -> Int
+    if c >= 97
+        if c <= 122
+            return 1
+    if c >= 65
+        if c <= 90
+            return 1
+    if c >= 48
+        if c <= 57
+            return 1
+    if c == 95
+        return 1
+    0
+
+fn rx_swap_case(c: Int) -> Int
+    if c >= 97
+        if c <= 122
+            return c - 32
+    if c >= 65
+        if c <= 90
+            return c + 32
+    c
+
+fn rx_lower(c: Int) -> Int
+    if c >= 65
+        if c <= 90
+            return c + 32
+    c
+
+# Clase = vec [neg, lo1, hi1, lo2, hi2, ...]; devuelve su índice en la tabla.
+fn rxp_new_class(re: Int, neg: Int) -> Int ! alloc
+    cl = vec_new()
+    x = vec_push(cl, neg)
+    tbl = vec_get(re, 7)
+    id = vec_len(tbl)
+    x = vec_push(tbl, cl)
+    id
+
+fn rxp_class_range(re: Int, idx: Int, lo: Int, hi: Int) -> Int
+    cl = vec_get(vec_get(re, 7), idx)
+    x = vec_push(cl, lo)
+    x = vec_push(cl, hi)
+    0
+
+# Añade a la clase los rangos de \d, \w o \s (kind = d, w, s).
+fn rxp_class_shorthand(re: Int, idx: Int, kind: Int) -> Int
+    if kind == 100
+        x = rxp_class_range(re, idx, 48, 57)
+    if kind == 119
+        x = rxp_class_range(re, idx, 48, 57)
+        x = rxp_class_range(re, idx, 65, 90)
+        x = rxp_class_range(re, idx, 97, 122)
+        x = rxp_class_range(re, idx, 95, 95)
+    if kind == 115
+        x = rxp_class_range(re, idx, 9, 13)
+        x = rxp_class_range(re, idx, 32, 32)
+    0
+
+fn rxm_class_has(cl: Int, c: Int) -> Int
+    n = vec_len(cl)
+    i = 1
+    while i + 1 < n
+        if c >= vec_get(cl, i)
+            if c <= vec_get(cl, i + 1)
+                return 1
+        i = i + 2
+    0
+
+fn rxm_class(re: Int, idx: Int, c: Int) -> Int
+    cl = vec_get(vec_get(re, 7), idx)
+    hit = rxm_class_has(cl, c)
+    if hit == 0
+        if vec_get(re, 3) != 0
+            alt = rx_swap_case(c)
+            if alt != c
+                hit = rxm_class_has(cl, alt)
+    if vec_get(cl, 0) != 0
+        if hit != 0
+            return 0
+        return 1
+    hit
+
+# ---------------------------------------------------------------- parser
+
+fn rxp_fail(re: Int, msg: String) -> Int ! alloc
+    if vec_get(re, 8) == 0
+        x = vec_set(re, 8, str_as_int(msg + " at position " + int_to_str(vec_get(re, 9))))
+    0 - 1
+
+fn rxp_peek(re: Int, pat: String) -> Int
+    p = vec_get(re, 9)
+    if p >= str_len(pat)
+        0 - 1
+    else
+        str_char(pat, p)
+
+fn rxp_eat(re: Int) -> Int
+    x = vec_set(re, 9, vec_get(re, 9) + 1)
+    0
+
+fn rxp_alt(re: Int, pat: String) -> Int ! alloc
+    ast = vec_get(re, 14)
+    left = rxp_cat(re, pat)
+    if left < 0
+        return 0 - 1
+    while rxp_peek(re, pat) == 124
+        x = rxp_eat(re)
+        right = rxp_cat(re, pat)
+        if right < 0
+            return 0 - 1
+        left = rxa_new(ast, 10, left, right, 0)
+    left
+
+fn rxp_cat(re: Int, pat: String) -> Int ! alloc
+    ast = vec_get(re, 14)
+    node = rxa_new(ast, 9, 0, 0, 0)
+    go = 1
+    while go != 0
+        c = rxp_peek(re, pat)
+        if c < 0
+            go = 0
+        elsif c == 124
+            go = 0
+        elsif c == 41
+            go = 0
+        else
+            atom = rxp_quant(re, pat)
+            if atom < 0
+                return 0 - 1
+            x = rxa_add(ast, node, atom)
+    node
+
+# Posición tras la racha de dígitos que empieza en p.
+fn rxp_digits_end(pat: String, p: Int) -> Int
+    n = str_len(pat)
+    i = p
+    while i < n
+        c = str_char(pat, i)
+        if c < 48
+            return i
+        if c > 57
+            return i
+        i = i + 1
+    i
+
+# Intenta leer {n}, {n,} o {n,m} desde "{" en la posición actual (sin consumir).
+# Si es válido devuelve 1 y deja min en re[15], max en re[16] (-1 = sin límite)
+# y la posición siguiente en re[17].
+fn rxp_brace(re: Int, pat: String) -> Int ! alloc
+    n = str_len(pat)
+    ds = vec_get(re, 9) + 1
+    de = rxp_digits_end(pat, ds)
+    if de == ds
+        return 0
+    if de >= n
+        return 0
+    lo = sk_parse_int(str_slice(pat, ds, de))
+    c = str_char(pat, de)
+    if c == 125
+        r1 = vec_set(re, 15, lo)
+        r2 = vec_set(re, 16, lo)
+        r3 = vec_set(re, 17, de + 1)
+        return 1
+    if c != 44
+        return 0
+    ms = de + 1
+    me = rxp_digits_end(pat, ms)
+    if me >= n
+        return 0
+    if str_char(pat, me) != 125
+        return 0
+    hi = 0 - 1
+    if me > ms
+        hi = sk_parse_int(str_slice(pat, ms, me))
+    r4 = vec_set(re, 15, lo)
+    r5 = vec_set(re, 16, hi)
+    r6 = vec_set(re, 17, me + 1)
+    1
+
+fn rxp_quant(re: Int, pat: String) -> Int ! alloc
+    ast = vec_get(re, 14)
+    atom = rxp_atom(re, pat)
+    if atom < 0
+        return 0 - 1
+    c = rxp_peek(re, pat)
+    mn = 0 - 1
+    mx = 0 - 1
+    if c == 42
+        mn = 0
+        mx = 0 - 1
+        x = rxp_eat(re)
+    elsif c == 43
+        mn = 1
+        mx = 0 - 1
+        x = rxp_eat(re)
+    elsif c == 63
+        mn = 0
+        mx = 1
+        x = rxp_eat(re)
+    elsif c == 123
+        if rxp_brace(re, pat) != 0
+            mn = vec_get(re, 15)
+            mx = vec_get(re, 16)
+            x = vec_set(re, 9, vec_get(re, 17))
+    if mn < 0
+        return atom
+    if mx >= 0
+        if mx < mn
+            return rxp_fail(re, "bad repetition range")
+    if mn > 1000
+        return rxp_fail(re, "repetition too large")
+    if mx > 1000
+        return rxp_fail(re, "repetition too large")
+    # sufijo perezoso (?) o posesivo (+): se ignora
+    d = rxp_peek(re, pat)
+    if d == 63
+        x = rxp_eat(re)
+    elsif d == 43
+        x = rxp_eat(re)
+    rxa_new(ast, 11, atom, mn, mx)
+
+fn rxp_atom(re: Int, pat: String) -> Int ! alloc
+    ast = vec_get(re, 14)
+    c = rxp_peek(re, pat)
+    x = rxp_eat(re)
+    if c == 40
+        if rxp_peek(re, pat) == 63
+            x = rxp_eat(re)
+            if rxp_peek(re, pat) == 58
+                x = rxp_eat(re)
+            else
+                return rxp_fail(re, "unsupported group syntax")
+        inner = rxp_alt(re, pat)
+        if inner < 0
+            return 0 - 1
+        if rxp_peek(re, pat) != 41
+            return rxp_fail(re, "missing )")
+        x = rxp_eat(re)
+        g = rxa_new(ast, 8, 0, 0, 0)
+        x = rxa_add(ast, g, inner)
+        return g
+    if c == 41
+        return rxp_fail(re, "unmatched )")
+    if c == 46
+        return rxa_new(ast, 2, 0, 0, 0)
+    if c == 94
+        return rxa_new(ast, 4, 0, 0, 0)
+    if c == 36
+        return rxa_new(ast, 5, 0, 0, 0)
+    if c == 91
+        return rxp_bracket(re, pat)
+    if c == 42
+        return rxp_fail(re, "nothing to repeat")
+    if c == 43
+        return rxp_fail(re, "nothing to repeat")
+    if c == 63
+        return rxp_fail(re, "nothing to repeat")
+    if c == 92
+        return rxp_escape(re, pat)
+    rxa_new(ast, 1, c, 0, 0)
+
+fn rxp_escape(re: Int, pat: String) -> Int ! alloc
+    ast = vec_get(re, 14)
+    if vec_get(re, 9) >= str_len(pat)
+        return rxp_fail(re, "trailing backslash")
+    c = rxp_peek(re, pat)
+    x = rxp_eat(re)
+    if c == 100
+        idx = rxp_new_class(re, 0)
+        x = rxp_class_shorthand(re, idx, 100)
+        return rxa_new(ast, 3, idx, 0, 0)
+    if c == 68
+        idx = rxp_new_class(re, 1)
+        x = rxp_class_shorthand(re, idx, 100)
+        return rxa_new(ast, 3, idx, 0, 0)
+    if c == 119
+        idx = rxp_new_class(re, 0)
+        x = rxp_class_shorthand(re, idx, 119)
+        return rxa_new(ast, 3, idx, 0, 0)
+    if c == 87
+        idx = rxp_new_class(re, 1)
+        x = rxp_class_shorthand(re, idx, 119)
+        return rxa_new(ast, 3, idx, 0, 0)
+    if c == 115
+        idx = rxp_new_class(re, 0)
+        x = rxp_class_shorthand(re, idx, 115)
+        return rxa_new(ast, 3, idx, 0, 0)
+    if c == 83
+        idx = rxp_new_class(re, 1)
+        x = rxp_class_shorthand(re, idx, 115)
+        return rxa_new(ast, 3, idx, 0, 0)
+    if c == 98
+        return rxa_new(ast, 6, 0, 0, 0)
+    if c == 66
+        return rxa_new(ast, 7, 0, 0, 0)
+    if c == 110
+        return rxa_new(ast, 1, 10, 0, 0)
+    if c == 116
+        return rxa_new(ast, 1, 9, 0, 0)
+    if c == 114
+        return rxa_new(ast, 1, 13, 0, 0)
+    rxa_new(ast, 1, c, 0, 0)
+
+# Clase entre corchetes; "[" ya consumido.
+fn rxp_bracket(re: Int, pat: String) -> Int ! alloc
+    ast = vec_get(re, 14)
+    n = str_len(pat)
+    neg = 0
+    if rxp_peek(re, pat) == 94
+        neg = 1
+        x = rxp_eat(re)
+    idx = rxp_new_class(re, neg)
+    first = 1
+    while vec_get(re, 9) < n
+        c = rxp_peek(re, pat)
+        x = rxp_eat(re)
+        if c == 93
+            if first == 0
+                return rxa_new(ast, 3, idx, 0, 0)
+        first = 0
+        lo = c
+        if c == 92
+            if vec_get(re, 9) >= n
+                return rxp_fail(re, "trailing backslash")
+            e = rxp_peek(re, pat)
+            x = rxp_eat(re)
+            lo = e
+            if e == 100
+                x = rxp_class_shorthand(re, idx, 100)
+                lo = 0 - 1
+            elsif e == 119
+                x = rxp_class_shorthand(re, idx, 119)
+                lo = 0 - 1
+            elsif e == 115
+                x = rxp_class_shorthand(re, idx, 115)
+                lo = 0 - 1
+            elsif e == 110
+                lo = 10
+            elsif e == 116
+                lo = 9
+            elsif e == 114
+                lo = 13
+        if lo >= 0
+            hi = lo
+            if rxp_peek(re, pat) == 45
+                p = vec_get(re, 9)
+                if p + 1 < n
+                    if str_char(pat, p + 1) != 93
+                        x = rxp_eat(re)
+                        hi = rxp_peek(re, pat)
+                        x = rxp_eat(re)
+                        if hi == 92
+                            hi = rxp_peek(re, pat)
+                            x = rxp_eat(re)
+            x = rxp_class_range(re, idx, lo, hi)
+    rxp_fail(re, "missing ]")
+
+# ---------------------------------------------------------------- compilador
+
+# Operaciones: 1 CHAR, 2 ANY, 3 CLASS, 4 SPLIT(x preferido, y), 5 JMP, 6 MATCH,
+# 7 BOL, 8 EOL, 9 WB, 10 NWB.
+fn rxc_push(re: Int, op: Int, x: Int, y: Int) -> Int
+    pc = vec_len(vec_get(re, 0))
+    v = vec_push(vec_get(re, 0), op)
+    v = vec_push(vec_get(re, 1), x)
+    v = vec_push(vec_get(re, 2), y)
+    pc
+
+fn rxc_pc(re: Int) -> Int
+    vec_len(vec_get(re, 0))
+
+fn rxc_emit(re: Int, ast: Int, n: Int) -> Int ! alloc
+    if vec_len(vec_get(re, 0)) > 20000
+        return rxp_fail(re, "pattern too large")
+    k = rxa_kind(ast, n)
+    if k == 1
+        c = rxa_a(ast, n)
+        if vec_get(re, 3) != 0
+            c = rx_lower(c)
+        x = rxc_push(re, 1, c, 0)
+    if k == 2
+        x = rxc_push(re, 2, 0, 0)
+    if k == 3
+        x = rxc_push(re, 3, rxa_a(ast, n), 0)
+    if k == 4
+        x = rxc_push(re, 7, 0, 0)
+    if k == 5
+        x = rxc_push(re, 8, 0, 0)
+    if k == 6
+        x = rxc_push(re, 9, 0, 0)
+    if k == 7
+        x = rxc_push(re, 10, 0, 0)
+    if k == 8
+        x = rxc_emit(re, ast, rxa_first(ast, n))
+    if k == 9
+        c = rxa_first(ast, n)
+        while c >= 0
+            x = rxc_emit(re, ast, c)
+            c = rxa_next(ast, c)
+    if k == 10
+        sp = rxc_push(re, 4, 0, 0)
+        x = vec_set(vec_get(re, 1), sp, sp + 1)
+        x = rxc_emit(re, ast, rxa_a(ast, n))
+        jp = rxc_push(re, 5, 0, 0)
+        x = vec_set(vec_get(re, 2), sp, rxc_pc(re))
+        x = rxc_emit(re, ast, rxa_b(ast, n))
+        x = vec_set(vec_get(re, 1), jp, rxc_pc(re))
+    if k == 11
+        x = rxc_repeat(re, ast, n)
+    0
+
+fn rxc_repeat(re: Int, ast: Int, n: Int) -> Int ! alloc
+    body = rxa_a(ast, n)
+    mn = rxa_b(ast, n)
+    mx = rxa_c(ast, n)
+    i = 0
+    while i < mn
+        x = rxc_emit(re, ast, body)
+        i = i + 1
+    if mx < 0
+        l1 = rxc_push(re, 4, 0, 0)
+        x = vec_set(vec_get(re, 1), l1, l1 + 1)
+        x = rxc_emit(re, ast, body)
+        x = rxc_push(re, 5, l1, 0)
+        x = vec_set(vec_get(re, 2), l1, rxc_pc(re))
+        return 0
+    splits = vec_new()
+    j = mn
+    while j < mx
+        sp = rxc_push(re, 4, 0, 0)
+        x = vec_set(vec_get(re, 1), sp, sp + 1)
+        x = vec_push(splits, sp)
+        x = rxc_emit(re, ast, body)
+        j = j + 1
+    endpc = rxc_pc(re)
+    q = 0
+    while q < vec_len(splits)
+        x = vec_set(vec_get(re, 2), vec_get(splits, q), endpc)
+        q = q + 1
+    0
+
+# ---------------------------------------------------------------- coincidencia
+
+fn rxm_gen(re: Int) -> Int
+    g = vec_get(re, 13) + 1
+    x = vec_set(re, 13, g)
+    g
+
+# Cierre por transiciones vacías desde pc; añade a `list` los estados que consumen o MATCH.
+fn rxm_add(re: Int, list: Int, cnt: Int, pc: Int, text: String, i: Int, gen: Int) -> Int
+    marks = vec_get(re, 10)
+    if vec_get(marks, pc) == gen
+        return cnt
+    x = vec_set(marks, pc, gen)
+    op = vec_get(vec_get(re, 0), pc)
+    if op == 5
+        return rxm_add(re, list, cnt, vec_get(vec_get(re, 1), pc), text, i, gen)
+    if op == 4
+        c1 = rxm_add(re, list, cnt, vec_get(vec_get(re, 1), pc), text, i, gen)
+        return rxm_add(re, list, c1, vec_get(vec_get(re, 2), pc), text, i, gen)
+    if op == 7
+        if i == 0
+            return rxm_add(re, list, cnt, pc + 1, text, i, gen)
+        return cnt
+    if op == 8
+        if i == str_len(text)
+            return rxm_add(re, list, cnt, pc + 1, text, i, gen)
+        return cnt
+    if op == 9
+        if rxm_boundary(text, i) != 0
+            return rxm_add(re, list, cnt, pc + 1, text, i, gen)
+        return cnt
+    if op == 10
+        if rxm_boundary(text, i) == 0
+            return rxm_add(re, list, cnt, pc + 1, text, i, gen)
+        return cnt
+    y = vec_set(list, cnt, pc)
+    cnt + 1
+
+fn rxm_boundary(text: String, i: Int) -> Int
+    a = 0
+    b = 0
+    if i > 0
+        a = rx_is_word(str_char(text, i - 1))
+    if i < str_len(text)
+        b = rx_is_word(str_char(text, i))
+    if a != b
+        1
+    else
+        0
+
+# 1 si el estado `pc` (CHAR, ANY o CLASS) acepta el byte c.
+fn rxm_accepts(re: Int, pc: Int, c: Int) -> Int
+    op = vec_get(vec_get(re, 0), pc)
+    x = vec_get(vec_get(re, 1), pc)
+    if op == 1
+        cc = c
+        if vec_get(re, 3) != 0
+            cc = rx_lower(c)
+        if cc == x
+            return 1
+        return 0
+    if op == 2
+        if c == 10
+            return 0
+        return 1
+    if op == 3
+        return rxm_class(re, x, c)
+    0
+
+# Final de la coincidencia más larga que empieza exactamente en s, o -1.
+fn rx_match_at(re: Int, text: String, s: Int) -> Int
+    n = str_len(text)
+    clist = vec_get(re, 11)
+    nlist = vec_get(re, 12)
+    ccnt = rxm_add(re, clist, 0, 0, text, s, rxm_gen(re))
+    best = 0 - 1
+    i = s
+    while ccnt > 0
+        gen = rxm_gen(re)
+        ncnt = 0
+        k = 0
+        while k < ccnt
+            pc = vec_get(clist, k)
+            op = vec_get(vec_get(re, 0), pc)
+            if op == 6
+                best = i
+            elsif i < n
+                if rxm_accepts(re, pc, str_char(text, i)) != 0
+                    ncnt = rxm_add(re, nlist, ncnt, pc + 1, text, i + 1, gen)
+            k = k + 1
+        tmp = clist
+        clist = nlist
+        nlist = tmp
+        ccnt = ncnt
+        i = i + 1
+    best
+
+# Cierre de primeros bytes posibles desde pc (aserciones se atraviesan).
+fn rxf_walk(re: Int, pc: Int, seen: Int) -> Int
+    if vec_get(seen, pc) != 0
+        return 0
+    x = vec_set(seen, pc, 1)
+    op = vec_get(vec_get(re, 0), pc)
+    fs = vec_get(re, 4)
+    if op == 5
+        return rxf_walk(re, vec_get(vec_get(re, 1), pc), seen)
+    if op == 4
+        a = rxf_walk(re, vec_get(vec_get(re, 1), pc), seen)
+        return rxf_walk(re, vec_get(vec_get(re, 2), pc), seen)
+    if op == 6
+        nl = vec_set(re, 5, 1)
+        return 0
+    if op == 7
+        return rxf_walk(re, pc + 1, seen)
+    if op == 8
+        return rxf_walk(re, pc + 1, seen)
+    if op == 9
+        return rxf_walk(re, pc + 1, seen)
+    if op == 10
+        return rxf_walk(re, pc + 1, seen)
+    b = 0
+    while b < 256
+        if rxm_accepts(re, pc, b) != 0
+            x = vec_set(fs, b, 1)
+        b = b + 1
+    0
+
+fn regex_compile(pat: String, icase: Int) -> Int ! alloc
+    re = vec_new()
+    i = 0
+    while i < 15
+        x = vec_push(re, 0)
+        i = i + 1
+    x = vec_set(re, 0, vec_new())
+    x = vec_set(re, 1, vec_new())
+    x = vec_set(re, 2, vec_new())
+    x = vec_set(re, 3, icase)
+    x = vec_set(re, 4, vec_new())
+    x = vec_set(re, 6, 0 - 1)
+    x = vec_set(re, 7, vec_new())
+    x = vec_set(re, 14, 0)
+    x = vec_push(re, 0)
+    x = vec_push(re, 0)
+    x = vec_push(re, 0)
+    ast = vec_new()
+    j = 0
+    while j < 7
+        x = vec_push(ast, vec_new())
+        j = j + 1
+    x = vec_set(re, 14, ast)
+    root = rxp_alt(re, pat)
+    if root >= 0
+        if vec_get(re, 9) < str_len(pat)
+            root = rxp_fail(re, "unmatched )")
+    if root < 0
+        return re
+    x = rxc_emit(re, ast, root)
+    x = rxc_push(re, 6, 0, 0)
+    plen = rxc_pc(re)
+    marks = vec_new()
+    la = vec_new()
+    lb = vec_new()
+    k = 0
+    while k <= plen
+        x = vec_push(marks, 0)
+        x = vec_push(la, 0)
+        x = vec_push(lb, 0)
+        k = k + 1
+    x = vec_set(re, 10, marks)
+    x = vec_set(re, 11, la)
+    x = vec_set(re, 12, lb)
+    fs = vec_get(re, 4)
+    b = 0
+    while b < 256
+        x = vec_push(fs, 0)
+        b = b + 1
+    seen = vec_new()
+    k = 0
+    while k <= plen
+        x = vec_push(seen, 0)
+        k = k + 1
+    x = rxf_walk(re, 0, seen)
+    re
+
+# Posición del inicio de la coincidencia más a la izquierda desde `from`, o -1.
+# El final queda en regex_end(re).
+fn regex_find(re: Int, text: String, from: Int) -> Int
+    n = str_len(text)
+    nullable = vec_get(re, 5)
+    fs = vec_get(re, 4)
+    s = from
+    if s < 0
+        s = 0
+    while s <= n
+        try_it = 1
+        if nullable == 0
+            try_it = 0
+            if s < n
+                try_it = vec_get(fs, str_char(text, s))
+        if try_it != 0
+            e = rx_match_at(re, text, s)
+            if e >= 0
+                se = vec_set(re, 6, e)
+                return s
+        s = s + 1
+    0 - 1
+
+fn regex_test(re: Int, text: String) -> Int
+    if regex_find(re, text, 0) >= 0
+        1
+    else
+        0
+
+# 1 si el patrón no contiene metacaracteres (se puede buscar como texto plano).
+fn regex_is_literal(pat: String) -> Int
+    n = str_len(pat)
+    i = 0
+    while i < n
+        c = str_char(pat, i)
+        if c == 92
+            return 0
+        if c == 46
+            return 0
+        if c == 42
+            return 0
+        if c == 43
+            return 0
+        if c == 63
+            return 0
+        if c == 40
+            return 0
+        if c == 41
+            return 0
+        if c == 91
+            return 0
+        if c == 93
+            return 0
+        if c == 123
+            return 0
+        if c == 125
+            return 0
+        if c == 124
+            return 0
+        if c == 94
+            return 0
+        if c == 36
+            return 0
+        i = i + 1
+    1
+
+# Escapa los metacaracteres para usar `s` como patrón literal.
+fn regex_escape(s: String) -> String ! alloc
+    out = ""
+    n = str_len(s)
+    i = 0
+    while i < n
+        c = str_char(s, i)
+        meta = 0
+        if regex_is_literal(char_to_str(c)) == 0
+            meta = 1
+        if meta != 0
+            out = out + char_to_str(92)
+        out = out + char_to_str(c)
+        i = i + 1
+    out
+
+# Filtro rápido sin reservar memoria: 1 si algún byte de text[lo..hi) puede iniciar una
+# coincidencia (o el patrón admite coincidencia vacía). Si devuelve 0, la línea no casa.
+fn regex_prefilter(re: Int, text: String, lo: Int, hi: Int) -> Int
+    if vec_get(re, 5) != 0
+        return 1
+    fs = vec_get(re, 4)
+    i = lo
+    while i < hi
+        if vec_get(fs, str_char(text, i)) != 0
+            return 1
+        i = i + 1
+    0

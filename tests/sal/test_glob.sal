@@ -1,0 +1,33 @@
+import "../../glob.sal"
+import "support/assert.sal"
+
+fn m(pat: String, s: String, want: Int, code: Int) -> Int ! io, alloc
+    ck_int(glob_match(pat, s), want, code)
+
+fn main() -> Int ! io, alloc
+    f = 0
+    f = f + m("*.sal", "a.sal", 1, 1)
+    f = f + m("*.sal", "dir/a.sal", 0, 2)
+    f = f + m("**/*.sal", "dir/sub/a.sal", 1, 3)
+    f = f + m("**/*.sal", "a.sal", 1, 4)
+    f = f + m("src/**", "src/a/b.txt", 1, 5)
+    f = f + m("src/**", "other/a.txt", 0, 6)
+    f = f + m("a?c", "abc", 1, 7)
+    f = f + m("a?c", "a/c", 0, 8)
+    f = f + m("[a-c]x", "bx", 1, 9)
+    f = f + m("[a-c]x", "dx", 0, 10)
+    f = f + m("[!a-c]x", "dx", 1, 11)
+    f = f + m("*.{{ts,tsx}}", "a.tsx", 1, 12)
+    f = f + m("*.{{ts,tsx}}", "a.js", 0, 13)
+    f = f + m("{{a,b{{1,2}}}}.c", "b2.c", 1, 14)
+    f = f + m("a\\*b", "a*b", 1, 15)
+    f = f + m("a\\*b", "aXb", 0, 16)
+    f = f + m("*", "", 1, 17)
+    f = f + m("**/test_*.sal", "tests/sal/test_x.sal", 1, 18)
+    f = f + m("**/test_*.sal", "tests/sal/x.sal", 0, 19)
+    f = f + m("a*b*c", "aXXbYYc", 1, 20)
+    f = f + m("a*b*c", "aXXbYY", 0, 21)
+    f = f + ck_int(glob_match_name("*.rs", "src/x/lib.rs"), 1, 22)
+    f = f + ck_int(glob_match_name("src/*.rs", "src/lib.rs"), 1, 23)
+    f = f + ck_int(vec_len(glob_expand("x{{a,b}}{{1,2}}")), 4, 24)
+    f

@@ -1,0 +1,103 @@
+# salkit/proc.sal — ejecutar un proceso y capturar su salida (stdout + stderr mezclados).
+#
+# El resultado es un asa Int: proc_exit, proc_timed_out, proc_output, proc_truncated.
+# Con timeout vence -> se envía SIGKILL al proceso hijo.
+
+import "io/io.sal"
+import "io/abi.sal"
+import "io/process.sal"
+import "io/pipe.sal"
+import "io/time.sal"
+import "strbuf.sal"
+
+fn proc_exit(r: Int) -> Int
+    vec_get(r, 0)
+
+fn proc_timed_out(r: Int) -> Int
+    vec_get(r, 1)
+
+fn proc_output(r: Int) -> String
+    str_from_int(vec_get(r, 2))
+
+# 1 si la salida superó `max_bytes` y se recortó.
+fn proc_truncated(r: Int) -> Int
+    vec_get(r, 3)
+
+fn proc_result(exit_code: Int, timed_out: Int, output: String, truncated: Int) -> Int ! alloc
+    r = vec_new()
+    x = vec_push(r, exit_code)
+    x = vec_push(r, timed_out)
+    x = vec_push(r, str_as_int(output))
+    x = vec_push(r, truncated)
+    r
+
+fn proc_argv_tab(argv: Int) -> Bytes ! alloc
+    n = vec_len(argv)
+    tab = bytes_new(n * 16 + 16)
+    i = 0
+    while i < n
+        s = sk_sl_get(argv, i)
+        x = spawn_argv_slot_ptr(tab, i, spawn_string_buf(s), str_len(s))
+        i = i + 1
+    tab
+
+# Ejecuta `path` con la lista de argumentos `argv` (incluye argv[0]).
+# `cwd` vacío = directorio actual. La salida se recorta a `max_bytes` (cabeza + cola).
+fn proc_run(path: String, argv: Int, cwd: String, timeout_ms: Int, max_bytes: Int) -> Int ! io, alloc
+    pp = pipe_create()
+    if pp < 0
+        return proc_result(127, 0, "pipe failed", 0)
+    rd = pipe_read_fd(pp)
+    wr = pipe_write_fd(pp)
+    pid = spawn_io_argv(path, vec_len(argv), proc_argv_tab(argv), spawn_fd_closed(), wr, wr, cwd, 0 - 1)
+    x = close_fd(wr)
+    if pid < 0
+        cr = close_fd(rd)
+        return proc_result(127, 0, "failed to start " + path, 0)
+    chunk = bytes_new(65536)
+    deadline = uptime_ms() + timeout_ms
+    hard_cap = max_bytes * 4
+    if hard_cap < 1048576
+        hard_cap = 1048576
+    acc = ""
+    total = 0
+    timed_out = 0
+    go = 1
+    while go != 0
+        left = deadline - uptime_ms()
+        if left <= 0
+            timed_out = 1
+            go = 0
+        else
+            slice = left
+            if slice > 100
+                slice = 100
+            k = read_timeout_fd(rd, bytes_ptr(chunk), 65536, slice)
+            if k > 0
+                if total < hard_cap
+                    acc = acc + bytes_to_str(bytes_view(chunk, 0, k))
+                total = total + k
+            elsif k == 0
+                go = 0
+            elsif k != 0 - 11
+                go = 0
+    if timed_out != 0
+        x = kill_pid(pid, 9)
+    status = wait_pid(pid)
+    x = close_fd(rd)
+    code = wait_exit_code(status)
+    if timed_out != 0
+        code = 124
+    trunc = 0
+    if str_len(acc) > max_bytes
+        trunc = 1
+        acc = sk_truncate_middle(acc, max_bytes)
+    proc_result(code, timed_out, acc, trunc)
+
+# Ejecuta `shell -c cmd` (shell = "/bin/sh" en Linux, "/bin/sosh" en soso).
+fn proc_sh(shell: String, cmd: String, cwd: String, timeout_ms: Int, max_bytes: Int) -> Int ! io, alloc
+    argv = vec_new()
+    x = vec_push(argv, str_as_int(shell))
+    x = vec_push(argv, str_as_int("-c"))
+    x = vec_push(argv, str_as_int(cmd))
+    proc_run(shell, argv, cwd, timeout_ms, max_bytes)

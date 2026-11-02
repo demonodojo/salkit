@@ -1,0 +1,39 @@
+import "../../frontmatter.sal"
+import "../../json.sal"
+import "support/assert.sal"
+
+fn main() -> Int ! io, alloc
+    f = 0
+    src = "---\ndescription: Review code safely\nmode: subagent\nmodel: \"anthropic/claude\"\ntemperature: 3\nhidden: true\ntools:\n  write: false\n  edit: false\npermission:\n  bash:\n    \"git diff\": allow\n    \"*\": ask\n  edit: deny\nlist:\n  - one\n  - two words\ninline: [a, b, 7]\nurl: http://x.y/z # comment\n# only comment\nempty:\n---\nBody line 1\n\nBody line 3\n"
+    fm = fm_parse(src)
+    d = fm_doc(fm)
+    r = fm_root(fm)
+    f = f + ck_int(fm_has_header(fm), 1, 1)
+    f = f + ck_int(json_ok(d), 1, 2)
+    f = f + ck_str(fm_get(fm, "description"), "Review code safely", 3)
+    f = f + ck_str(fm_get(fm, "mode"), "subagent", 4)
+    f = f + ck_str(fm_get(fm, "model"), "anthropic/claude", 5)
+    f = f + ck_int(json_get_int(d, r, "temperature"), 3, 6)
+    f = f + ck_int(json_bool(d, json_get(d, r, "hidden")), 1, 7)
+    tools = json_get(d, r, "tools")
+    f = f + ck_int(json_kind(d, json_get(d, tools, "write")), 1, 8)
+    f = f + ck_int(json_len(d, tools), 2, 9)
+    f = f + ck_str(json_str(d, json_path(d, r, "permission.bash.git diff")), "allow", 10)
+    f = f + ck_str(json_str(d, json_path(d, r, "permission.bash.*")), "ask", 11)
+    f = f + ck_str(json_str(d, json_path(d, r, "permission.edit")), "deny", 12)
+    f = f + ck_int(json_len(d, json_get(d, r, "list")), 2, 13)
+    f = f + ck_str(json_str(d, json_path(d, r, "list.1")), "two words", 14)
+    f = f + ck_int(json_len(d, json_get(d, r, "inline")), 3, 15)
+    f = f + ck_int(json_int(d, json_path(d, r, "inline.2")), 7, 16)
+    f = f + ck_str(fm_get(fm, "url"), "http://x.y/z", 17)
+    f = f + ck_int(json_is_null(d, json_get(d, r, "empty")), 1, 18)
+    f = f + ck_str(fm_body(fm), "Body line 1\n\nBody line 3", 19)
+
+    plain = fm_parse("just text\nsecond")
+    f = f + ck_int(fm_has_header(plain), 0, 20)
+    f = f + ck_str(fm_body(plain), "just text\nsecond", 21)
+    f = f + ck_int(fm_has(plain, "x"), 0, 22)
+
+    unclosed = fm_parse("---\na: 1\nno close")
+    f = f + ck_int(fm_has_header(unclosed), 0, 23)
+    f
