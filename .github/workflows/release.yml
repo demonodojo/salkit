@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar que el tag coincide con Sal.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Sal.toml | head -n1)"
+          if [ "$tag" != "$ver" ]; then
+            echo "El tag $GITHUB_REF_NAME no coincide con version=$ver en Sal.toml" >&2
+            exit 1
+          fi
+
+      - name: Crear release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag --title "$GITHUB_REF_NAME" $flags
