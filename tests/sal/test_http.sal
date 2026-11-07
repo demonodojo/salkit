@@ -8,7 +8,7 @@ fn main() -> Int ! io, alloc
     f = 0
     port = 18931
     pid = spawn_io_5("python3", "tests/sal/support/mock_server.py", "18931", "", "", spawn_fd_closed(), spawn_fd_closed(), spawn_fd_closed(), 0 - 1)
-    s = sleep_ms(700)
+    sleep_ms(700)
 
     r = http_get("127.0.0.1", port, "/", "", 5000)
     f = f + ck_int(http_status(r), 200, 1)
@@ -17,16 +17,16 @@ fn main() -> Int ! io, alloc
     f = f + ck_str(http_header(r, "X-CUSTOM"), "Val", 4)
     f = f + ck_int(http_is_ok(r), 1, 5)
 
-    r2 = http_post_json("127.0.0.1", port, "/echo", "tok123", "{{\"a\":\"b\"}}", 5000)
+    r2 = http_post_json("127.0.0.1", port, "/echo", "tok123", "{\"a\":\"b\"}", 5000)
     f = f + ck_int(http_status(r2), 200, 6)
     d = json_parse(http_body(r2))
     root = json_root(d)
     f = f + ck_str(json_get_str(d, root, "auth"), "Bearer tok123", 7)
-    f = f + ck_str(json_get_str(d, root, "body"), "{{\"a\":\"b\"}}", 8)
+    f = f + ck_str(json_get_str(d, root, "body"), "{\"a\":\"b\"}", 8)
     f = f + ck_int(json_get_int(d, root, "len"), 9, 9)
     f = f + ck_str(json_get_str(d, root, "ctype"), "application/json", 10)
 
-    r3 = http_post_json("127.0.0.1", port, "/busy", "", "{{}}", 5000)
+    r3 = http_post_json("127.0.0.1", port, "/busy", "", "{}", 5000)
     f = f + ck_int(http_status(r3), 429, 11)
     f = f + ck_int(http_is_ok(r3), 0, 12)
 
@@ -34,7 +34,7 @@ fn main() -> Int ! io, alloc
     f = f + ck_str(http_body(r4), "hello chunked world", 13)
 
     r5 = http_get("127.0.0.1", port, "/big", "", 10000)
-    f = f + ck_int(str_len(http_body(r5)), 1000000, 14)
+    f = f + ck_int(http_body(r5).len(), 1000000, 14)
 
     r6 = http_get("127.0.0.1", port, "/nolen", "", 5000)
     f = f + ck_str(http_body(r6), "until-close", 15)
@@ -45,14 +45,14 @@ fn main() -> Int ! io, alloc
 
     r8 = http_get("127.0.0.1", port, "/slow", "", 500)
     f = f + ck_int(http_status(r8), 0, 18)
-    f = f + ck_int(str_len(http_error(r8)) > 0, 1, 19)
+    f = f + ck_int(http_error(r8).len() > 0, 1, 19)
 
     r9 = http_get("127.0.0.1", 18932, "/", "", 2000)
     f = f + ck_int(http_status(r9), 0, 20)
-    f = f + ck_int(str_len(http_error(r9)) > 0, 1, 21)
+    f = f + ck_int(http_error(r9).len() > 0, 1, 21)
 
     # streaming: líneas repartidas entre chunks
-    h = hs_open("127.0.0.1", port, "/sse", "tk", "{{}}", 5000)
+    h = hs_open("127.0.0.1", port, "/sse", "tk", "{}", 5000)
     f = f + ck_int(hs_status(h), 200, 30)
     f = f + ck_str(hs_next_line(h), "data: one", 31)
     f = f + ck_str(hs_next_line(h), "", 32)
@@ -60,16 +60,16 @@ fn main() -> Int ! io, alloc
     f = f + ck_str(hs_next_line(h), "", 34)
     f = f + ck_str(hs_next_line(h), "data: [DONE]", 35)
     f = f + ck_str(hs_next_line(h), "", 36)
-    f = f + ck_str(hs_next_line(h), char_to_str(4), 37)
-    x = hs_close(h)
-    h2 = hs_open("127.0.0.1", port, "/busy", "", "{{}}", 5000)
+    f = f + ck_str(hs_next_line(h), String.from_char(4), 37)
+    hs_close(h)
+    h2 = hs_open("127.0.0.1", port, "/busy", "", "{}", 5000)
     f = f + ck_int(hs_status(h2), 429, 38)
     f = f + ck_int(sk_contains(hs_read_rest(h2), "\"len\""), 1, 39)
-    x2 = hs_close(h2)
-    h3 = hs_open("127.0.0.1", 18932, "/sse", "", "{{}}", 1000)
+    hs_close(h2)
+    h3 = hs_open("127.0.0.1", 18932, "/sse", "", "{}", 1000)
     f = f + ck_int(hs_status(h3), 0, 40)
-    f = f + ck_int(str_len(hs_error(h3)) > 0, 1, 41)
+    f = f + ck_int(hs_error(h3).len() > 0, 1, 41)
 
-    k = kill_pid(pid, 9)
-    w = wait_pid(pid)
+    kill_pid(pid, 9)
+    wait_pid(pid)
     f

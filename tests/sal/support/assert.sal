@@ -1,7 +1,7 @@
 import "io/io.sal"
 
 fn ck_fail(code: Int, got: String, want: String) -> Int ! io, alloc
-    _w = write_str_fd(2, "FAIL #" + int_to_str(code) + " got=[" + got + "] want=[" + want + "]\n")
+    _w = Fd.new(2).write_str("FAIL #" + int_to_str(code) + " got=[" + got + "] want=[" + want + "]\n")
     1
 
 fn ck_int(got: Int, want: Int, code: Int) -> Int ! io, alloc

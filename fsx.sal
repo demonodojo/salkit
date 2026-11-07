@@ -7,61 +7,63 @@ import "io/fs.sal"
 import "strbuf.sal"
 
 fn fsx_exists(path: String) -> Int ! io, alloc
-    if stat_file_size(path) >= 0
+    if Path.new(path).size() >= 0
         1
     else
         0
 
 fn fsx_is_dir(path: String) -> Int ! io, alloc
-    is_dir(path)
+    Path.new(path).is_dir()
 
 fn fsx_is_file(path: String) -> Int ! io, alloc
-    if stat_file_size(path) < 0
+    p = Path.new(path)
+    if p.size() < 0
         return 0
-    if is_dir(path) != 0
+    if p.is_dir() != 0
         return 0
     1
 
 # Fecha de modificación (segundos) o -1.
 fn fsx_mtime(path: String) -> Int ! io, alloc
-    stat_mtime(path)
+    Path.new(path).mtime()
 
 # Número de inodo de la ruta (siguiendo enlaces) o -1.
 fn fsx_ino(path: String) -> Int ! io, alloc
-    st = bytes_new(stat_size())
+    st = Bytes.new(stat_size())
     b = path_to_buf(path)
-    rc = stat_path_ptr(bytes_ptr(b), str_len(path), bytes_ptr(st), stat_size())
+    rc = stat_path_ptr(b.ptr(), path.len(), st.ptr(), stat_size())
     if rc < 0
         return 0 - 1
-    bytes_get_i64(st, stat_off_ino())
+    st.get_i64(stat_off_ino())
 
 # Tamaño en bytes o -1.
 fn fsx_size(path: String) -> Int ! io, alloc
-    stat_file_size(path)
+    Path.new(path).size()
 
 # Lee hasta `max` bytes. Fichero ausente, directorio o error -> Bytes vacío.
 fn fsx_read_bytes_max(path: String, max: Int) -> Bytes ! io, alloc
-    size = stat_file_size(path)
+    p = Path.new(path)
+    size = p.size()
     if size <= 0
-        return bytes_new(0)
+        return Bytes.new(0)
     if size > max
         size = max
-    fd = open_read(path)
+    fd = p.open_read()
     if fd < 0
-        return bytes_new(0)
-    buf = bytes_new(size)
+        return Bytes.new(0)
+    buf = Bytes.new(size)
     pos = 0
     go = 1
     while go != 0
         if pos >= size
             go = 0
         else
-            k = read_fd(fd, bytes_ptr(buf) + pos, size - pos)
+            k = Fd.new(fd).read(buf.ptr() + pos, size - pos)
             if k <= 0
                 go = 0
             else
                 pos = pos + k
-    x = close_fd(fd)
+    Fd.new(fd).close()
     bytes_view(buf, 0, pos)
 
 fn fsx_read_bytes(path: String) -> Bytes ! io, alloc
@@ -69,35 +71,35 @@ fn fsx_read_bytes(path: String) -> Bytes ! io, alloc
 
 fn fsx_read_text_max(path: String, max: Int) -> String ! io, alloc
     b = fsx_read_bytes_max(path, max)
-    n = bytes_len(b)
+    n = b.len()
     if n <= 0
         return ""
-    bytes_to_str(b)
+    b.to_str()
 
 fn fsx_read_text(path: String) -> String ! io, alloc
     fsx_read_text_max(path, 268435456)
 
 # Escribe todo `data` en `fd` (varios write si hace falta). 0 si ok, 1 si error.
 fn fsx_write_fd(fd: Int, data: String) -> Int ! io, alloc
-    n = str_len(data)
+    n = data.len()
     if n <= 0
         return 0
-    buf = bytes_new(n)
-    x = str_bytes_copy(buf, 0, data)
+    buf = Bytes.new(n)
+    buf.write_str(0, data)
     pos = 0
     while pos < n
-        k = write_fd(fd, bytes_ptr(buf) + pos, n - pos)
+        k = Fd.new(fd).write(buf.ptr() + pos, n - pos)
         if k <= 0
             return 1
         pos = pos + k
     0
 
 fn fsx_open_write(path: String, flags: Int) -> Int ! io, alloc
-    parent = path_parent(path)
-    if str_len(parent) > 0
-        x = mkdir_p(parent)
+    parent = Path.new(path.slice(0, path.len())).parent()
+    if parent.len() > 0
+        Path.new(parent).mkdir_p()
     b = path_to_buf(path)
-    open_flags(bytes_ptr(b), str_len(path), flags)
+    open_flags(b.ptr(), path.len(), flags)
 
 # Crea los directorios que falten y sobrescribe el fichero. 0 si ok.
 fn fsx_write(path: String, data: String) -> Int ! io, alloc
@@ -105,7 +107,7 @@ fn fsx_write(path: String, data: String) -> Int ! io, alloc
     if fd < 0
         return 1
     r = fsx_write_fd(fd, data)
-    x = close_fd(fd)
+    Fd.new(fd).close()
     r
 
 fn fsx_append(path: String, data: String) -> Int ! io, alloc
@@ -113,40 +115,40 @@ fn fsx_append(path: String, data: String) -> Int ! io, alloc
     if fd < 0
         return 1
     r = fsx_write_fd(fd, data)
-    x = close_fd(fd)
+    Fd.new(fd).close()
     r
 
 fn fsx_remove(path: String) -> Int ! io, alloc
     b = path_to_buf(path)
-    unlink_path_ptr(bytes_ptr(b), str_len(path))
+    unlink_path_ptr(b.ptr(), path.len())
 
 # Entradas de un directorio ordenadas; los subdirectorios llevan "/" final (el shim de Linux
 # cuenta como directorio un enlace simbólico que apunta a uno).
 fn fsx_list_dir(dir: String) -> Int ! io, alloc
     sl = vec_new()
-    fd = open_read(dir)
+    fd = Path.new(dir).open_read()
     if fd < 0
         return sl
-    buf = bytes_new(dirent_size())
+    buf = Bytes.new(dirent_size())
     go = 1
     while go != 0
-        got = getdents_fd(fd, bytes_ptr(buf), dirent_size())
+        got = getdents_fd(fd, buf.ptr(), dirent_size())
         if got <= 0
             go = 0
         else
-            nl = bytes_get_u8(buf, dirent_off_name_len())
+            nl = buf.get_u8(dirent_off_name_len())
             if nl > 0
-                name = bytes_to_str(bytes_view(buf, dirent_off_name(), nl))
+                name = bytes_view(buf, dirent_off_name(), nl).to_str()
                 dot = 0
-                if str_eq(name, ".") != 0
+                if name.eq(".") != 0
                     dot = 1
-                if str_eq(name, "..") != 0
+                if name.eq("..") != 0
                     dot = 1
                 if dot == 0
-                    if bytes_get_u8(buf, dirent_off_file_type()) == ft_dir()
+                    if buf.get_u8(dirent_off_file_type()) == ft_dir()
                         name = name + "/"
-                    x = vec_push(sl, str_as_int(name))
-    x = close_fd(fd)
+                    x = vec_push(sl, name.to_int())
+    x = Fd.new(fd).close()
     x = sk_sl_sort(sl)
     sl
 
@@ -163,14 +165,14 @@ fn fsx_walk(root: String, ignores: Int, max: Int) -> Int ! io, alloc
 fn fsx_walk_into(out: Int, root: String, rel: String, ignores: Int, max: Int, depth: Int, anc: String) -> Int ! io, alloc
     if depth > 40
         return 0
-    dir = str_slice(root, 0, str_len(root))
-    if str_len(rel) > 0
+    dir = root.slice(0, root.len())
+    if rel.len() > 0
         dir = root + "/" + rel
     ino = fsx_ino(dir)
     if ino >= 0
-        if sk_contains(anc, "," + int_to_str(ino) + ",") != 0
+        if sk_contains(anc, "," + ino.to_str() + ",") != 0
             return 0
-    mine = anc + int_to_str(ino) + ","
+    mine = anc + ino.to_str() + ","
     names = fsx_list_dir(dir)
     n = vec_len(names)
     i = 0
@@ -179,16 +181,16 @@ fn fsx_walk_into(out: Int, root: String, rel: String, ignores: Int, max: Int, de
             return 0
         name = sk_sl_get(names, i)
         isdir = sk_ends_with(name, "/")
-        base = str_slice(name, 0, str_len(name))
+        base = name.slice(0, name.len())
         if isdir != 0
-            base = str_slice(name, 0, str_len(name) - 1)
+            base = name.slice(0, name.len() - 1)
         if sk_sl_contains(ignores, base) == 0
-            relp = str_slice(base, 0, str_len(base))
-            if str_len(rel) > 0
+            relp = base.slice(0, base.len())
+            if rel.len() > 0
                 relp = rel + "/" + base
             if isdir != 0
                 x = fsx_walk_into(out, root, relp, ignores, max, depth + 1, mine)
             else
-                x = vec_push(out, str_as_int(relp))
+                x = vec_push(out, relp.to_int())
         i = i + 1
     0

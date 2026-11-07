@@ -157,15 +157,15 @@ fn rxm_class(re: Int, idx: Int, c: Int) -> Int
 
 fn rxp_fail(re: Int, msg: String) -> Int ! alloc
     if vec_get(re, 8) == 0
-        x = vec_set(re, 8, str_as_int(msg + " at position " + int_to_str(vec_get(re, 9))))
+        x = vec_set(re, 8, (msg + " at position " + vec_get(re, 9).to_str()).to_int())
     0 - 1
 
 fn rxp_peek(re: Int, pat: String) -> Int
     p = vec_get(re, 9)
-    if p >= str_len(pat)
+    if p >= pat.len()
         0 - 1
     else
-        str_char(pat, p)
+        pat.char(p)
 
 fn rxp_eat(re: Int) -> Int
     x = vec_set(re, 9, vec_get(re, 9) + 1)
@@ -177,7 +177,7 @@ fn rxp_alt(re: Int, pat: String) -> Int ! alloc
     if left < 0
         return 0 - 1
     while rxp_peek(re, pat) == 124
-        x = rxp_eat(re)
+        rxp_eat(re)
         right = rxp_cat(re, pat)
         if right < 0
             return 0 - 1
@@ -205,10 +205,10 @@ fn rxp_cat(re: Int, pat: String) -> Int ! alloc
 
 # Posición tras la racha de dígitos que empieza en p.
 fn rxp_digits_end(pat: String, p: Int) -> Int
-    n = str_len(pat)
+    n = pat.len()
     i = p
     while i < n
-        c = str_char(pat, i)
+        c = pat.char(i)
         if c < 48
             return i
         if c > 57
@@ -220,19 +220,19 @@ fn rxp_digits_end(pat: String, p: Int) -> Int
 # Si es válido devuelve 1 y deja min en re[15], max en re[16] (-1 = sin límite)
 # y la posición siguiente en re[17].
 fn rxp_brace(re: Int, pat: String) -> Int ! alloc
-    n = str_len(pat)
+    n = pat.len()
     ds = vec_get(re, 9) + 1
     de = rxp_digits_end(pat, ds)
     if de == ds
         return 0
     if de >= n
         return 0
-    lo = sk_parse_int(str_slice(pat, ds, de))
-    c = str_char(pat, de)
+    lo = sk_parse_int(pat.slice(ds, de))
+    c = pat.char(de)
     if c == 125
-        r1 = vec_set(re, 15, lo)
-        r2 = vec_set(re, 16, lo)
-        r3 = vec_set(re, 17, de + 1)
+        vec_set(re, 15, lo)
+        vec_set(re, 16, lo)
+        vec_set(re, 17, de + 1)
         return 1
     if c != 44
         return 0
@@ -240,13 +240,13 @@ fn rxp_brace(re: Int, pat: String) -> Int ! alloc
     me = rxp_digits_end(pat, ms)
     if me >= n
         return 0
-    if str_char(pat, me) != 125
+    if pat.char(me) != 125
         return 0
     hi = 0 - 1
     if me > ms
-        hi = sk_parse_int(str_slice(pat, ms, me))
-    r4 = vec_set(re, 15, lo)
-    r5 = vec_set(re, 16, hi)
+        hi = sk_parse_int(pat.slice(ms, me))
+    vec_set(re, 15, lo)
+    vec_set(re, 16, hi)
     r6 = vec_set(re, 17, me + 1)
     1
 
@@ -286,10 +286,12 @@ fn rxp_quant(re: Int, pat: String) -> Int ! alloc
         return rxp_fail(re, "repetition too large")
     # sufijo perezoso (?) o posesivo (+): se ignora
     d = rxp_peek(re, pat)
-    if d == 63
-        x = rxp_eat(re)
-    elsif d == 43
-        x = rxp_eat(re)
+    match d
+        63 =>
+            x = rxp_eat(re)
+        43 =>
+            x = rxp_eat(re)
+
     rxa_new(ast, 11, atom, mn, mx)
 
 fn rxp_atom(re: Int, pat: String) -> Int ! alloc
@@ -334,7 +336,7 @@ fn rxp_atom(re: Int, pat: String) -> Int ! alloc
 
 fn rxp_escape(re: Int, pat: String) -> Int ! alloc
     ast = vec_get(re, 14)
-    if vec_get(re, 9) >= str_len(pat)
+    if vec_get(re, 9) >= pat.len()
         return rxp_fail(re, "trailing backslash")
     c = rxp_peek(re, pat)
     x = rxp_eat(re)
@@ -377,7 +379,7 @@ fn rxp_escape(re: Int, pat: String) -> Int ! alloc
 # Clase entre corchetes; "[" ya consumido.
 fn rxp_bracket(re: Int, pat: String) -> Int ! alloc
     ast = vec_get(re, 14)
-    n = str_len(pat)
+    n = pat.len()
     neg = 0
     if rxp_peek(re, pat) == 94
         neg = 1
@@ -398,27 +400,29 @@ fn rxp_bracket(re: Int, pat: String) -> Int ! alloc
             e = rxp_peek(re, pat)
             x = rxp_eat(re)
             lo = e
-            if e == 100
-                x = rxp_class_shorthand(re, idx, 100)
-                lo = 0 - 1
-            elsif e == 119
-                x = rxp_class_shorthand(re, idx, 119)
-                lo = 0 - 1
-            elsif e == 115
-                x = rxp_class_shorthand(re, idx, 115)
-                lo = 0 - 1
-            elsif e == 110
-                lo = 10
-            elsif e == 116
-                lo = 9
-            elsif e == 114
-                lo = 13
+            match e
+                100 =>
+                    x = rxp_class_shorthand(re, idx, 100)
+                    lo = 0 - 1
+                119 =>
+                    x = rxp_class_shorthand(re, idx, 119)
+                    lo = 0 - 1
+                115 =>
+                    x = rxp_class_shorthand(re, idx, 115)
+                    lo = 0 - 1
+                110 =>
+                    lo = 10
+                116 =>
+                    lo = 9
+                114 =>
+                    lo = 13
+
         if lo >= 0
             hi = lo
             if rxp_peek(re, pat) == 45
                 p = vec_get(re, 9)
                 if p + 1 < n
-                    if str_char(pat, p + 1) != 93
+                    if pat.char(p + 1) != 93
                         x = rxp_eat(re)
                         hi = rxp_peek(re, pat)
                         x = rxp_eat(re)
@@ -516,7 +520,7 @@ fn rxc_repeat(re: Int, ast: Int, n: Int) -> Int ! alloc
 
 fn rxm_gen(re: Int) -> Int
     g = vec_get(re, 13) + 1
-    x = vec_set(re, 13, g)
+    vec_set(re, 13, g)
     g
 
 # Cierre por transiciones vacías desde pc; añade a `list` los estados que consumen o MATCH.
@@ -524,7 +528,7 @@ fn rxm_add(re: Int, list: Int, cnt: Int, pc: Int, text: String, i: Int, gen: Int
     marks = vec_get(re, 10)
     if vec_get(marks, pc) == gen
         return cnt
-    x = vec_set(marks, pc, gen)
+    vec_set(marks, pc, gen)
     op = vec_get(vec_get(re, 0), pc)
     if op == 5
         return rxm_add(re, list, cnt, vec_get(vec_get(re, 1), pc), text, i, gen)
@@ -536,7 +540,7 @@ fn rxm_add(re: Int, list: Int, cnt: Int, pc: Int, text: String, i: Int, gen: Int
             return rxm_add(re, list, cnt, pc + 1, text, i, gen)
         return cnt
     if op == 8
-        if i == str_len(text)
+        if i == text.len()
             return rxm_add(re, list, cnt, pc + 1, text, i, gen)
         return cnt
     if op == 9
@@ -547,16 +551,16 @@ fn rxm_add(re: Int, list: Int, cnt: Int, pc: Int, text: String, i: Int, gen: Int
         if rxm_boundary(text, i) == 0
             return rxm_add(re, list, cnt, pc + 1, text, i, gen)
         return cnt
-    y = vec_set(list, cnt, pc)
+    vec_set(list, cnt, pc)
     cnt + 1
 
 fn rxm_boundary(text: String, i: Int) -> Int
     a = 0
     b = 0
     if i > 0
-        a = rx_is_word(str_char(text, i - 1))
-    if i < str_len(text)
-        b = rx_is_word(str_char(text, i))
+        a = rx_is_word(text.char(i - 1))
+    if i < text.len()
+        b = rx_is_word(text.char(i))
     if a != b
         1
     else
@@ -583,7 +587,7 @@ fn rxm_accepts(re: Int, pc: Int, c: Int) -> Int
 
 # Final de la coincidencia más larga que empieza exactamente en s, o -1.
 fn rx_match_at(re: Int, text: String, s: Int) -> Int
-    n = str_len(text)
+    n = text.len()
     clist = vec_get(re, 11)
     nlist = vec_get(re, 12)
     ccnt = rxm_add(re, clist, 0, 0, text, s, rxm_gen(re))
@@ -599,7 +603,7 @@ fn rx_match_at(re: Int, text: String, s: Int) -> Int
             if op == 6
                 best = i
             elsif i < n
-                if rxm_accepts(re, pc, str_char(text, i)) != 0
+                if rxm_accepts(re, pc, text.char(i)) != 0
                     ncnt = rxm_add(re, nlist, ncnt, pc + 1, text, i + 1, gen)
             k = k + 1
         tmp = clist
@@ -619,10 +623,10 @@ fn rxf_walk(re: Int, pc: Int, seen: Int) -> Int
     if op == 5
         return rxf_walk(re, vec_get(vec_get(re, 1), pc), seen)
     if op == 4
-        a = rxf_walk(re, vec_get(vec_get(re, 1), pc), seen)
+        rxf_walk(re, vec_get(vec_get(re, 1), pc), seen)
         return rxf_walk(re, vec_get(vec_get(re, 2), pc), seen)
     if op == 6
-        nl = vec_set(re, 5, 1)
+        vec_set(re, 5, 1)
         return 0
     if op == 7
         return rxf_walk(re, pc + 1, seen)
@@ -664,7 +668,7 @@ fn regex_compile(pat: String, icase: Int) -> Int ! alloc
     x = vec_set(re, 14, ast)
     root = rxp_alt(re, pat)
     if root >= 0
-        if vec_get(re, 9) < str_len(pat)
+        if vec_get(re, 9) < pat.len()
             root = rxp_fail(re, "unmatched )")
     if root < 0
         return re
@@ -699,7 +703,7 @@ fn regex_compile(pat: String, icase: Int) -> Int ! alloc
 # Posición del inicio de la coincidencia más a la izquierda desde `from`, o -1.
 # El final queda en regex_end(re).
 fn regex_find(re: Int, text: String, from: Int) -> Int
-    n = str_len(text)
+    n = text.len()
     nullable = vec_get(re, 5)
     fs = vec_get(re, 4)
     s = from
@@ -710,11 +714,11 @@ fn regex_find(re: Int, text: String, from: Int) -> Int
         if nullable == 0
             try_it = 0
             if s < n
-                try_it = vec_get(fs, str_char(text, s))
+                try_it = vec_get(fs, text.char(s))
         if try_it != 0
             e = rx_match_at(re, text, s)
             if e >= 0
-                se = vec_set(re, 6, e)
+                vec_set(re, 6, e)
                 return s
         s = s + 1
     0 - 1
@@ -727,10 +731,10 @@ fn regex_test(re: Int, text: String) -> Int
 
 # 1 si el patrón no contiene metacaracteres (se puede buscar como texto plano).
 fn regex_is_literal(pat: String) -> Int
-    n = str_len(pat)
+    n = pat.len()
     i = 0
     while i < n
-        c = str_char(pat, i)
+        c = pat.char(i)
         if c == 92
             return 0
         if c == 46
@@ -765,16 +769,16 @@ fn regex_is_literal(pat: String) -> Int
 # Escapa los metacaracteres para usar `s` como patrón literal.
 fn regex_escape(s: String) -> String ! alloc
     out = ""
-    n = str_len(s)
+    n = s.len()
     i = 0
     while i < n
-        c = str_char(s, i)
+        c = s.char(i)
         meta = 0
-        if regex_is_literal(char_to_str(c)) == 0
+        if regex_is_literal(String.from_char(c)) == 0
             meta = 1
         if meta != 0
-            out = out + char_to_str(92)
-        out = out + char_to_str(c)
+            out = out + String.from_char(92)
+        out = out + String.from_char(c)
         i = i + 1
     out
 
@@ -786,7 +790,7 @@ fn regex_prefilter(re: Int, text: String, lo: Int, hi: Int) -> Int
     fs = vec_get(re, 4)
     i = lo
     while i < hi
-        if vec_get(fs, str_char(text, i)) != 0
+        if vec_get(fs, text.char(i)) != 0
             return 1
         i = i + 1
     0

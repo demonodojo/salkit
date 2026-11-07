@@ -15,15 +15,15 @@ fn sk_hex_digit(c: Int) -> Int
 
 # 1 si `s` es un entero decimal con signo opcional y al menos un dígito.
 fn sk_is_int(s: String) -> Int
-    n = str_len(s)
+    n = s.len()
     i = 0
     if n > 0
-        if str_char(s, 0) == 45
+        if s.char(0) == 45
             i = 1
     if i >= n
         return 0
     while i < n
-        c = str_char(s, i)
+        c = s.char(i)
         if c < 48
             return 0
         if c > 57
@@ -34,16 +34,16 @@ fn sk_is_int(s: String) -> Int
 # Entero decimal con signo opcional; se detiene en el primer carácter no numérico.
 # Devuelve 0 si no hay dígitos.
 fn sk_parse_int(s: String) -> Int
-    n = str_len(s)
+    n = s.len()
     i = 0
     neg = 0
     if n > 0
-        if str_char(s, 0) == 45
+        if s.char(0) == 45
             neg = 1
             i = 1
     acc = 0
     while i < n
-        c = str_char(s, i)
+        c = s.char(i)
         if c < 48
             i = n
         elsif c > 57
@@ -58,11 +58,11 @@ fn sk_parse_int(s: String) -> Int
 
 # Entero hexadecimal sin prefijo; se detiene en el primer dígito inválido.
 fn sk_parse_hex(s: String) -> Int
-    n = str_len(s)
+    n = s.len()
     i = 0
     acc = 0
     while i < n
-        d = sk_hex_digit(str_char(s, i))
+        d = sk_hex_digit(s.char(i))
         if d < 0
             i = n
         else

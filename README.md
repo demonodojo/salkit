@@ -33,7 +33,7 @@ sal install        # enlaza sal_modules/io y sal_modules/salkit
 import "salkit/json.sal"
 
 fn main() -> Int ! alloc
-    d = json_parse("{{\"a\":[1,2]}}")
+    d = json_parse("{\"a\":[1,2]}")
     json_int(d, json_path(d, json_root(d), "a.1"))   # 2
 ```
 
@@ -52,7 +52,7 @@ fn main() -> Int ! alloc
 | `base64.sal` | `b64_` | `b64_encode` |
 | `frontmatter.sal` | `fm_` | cabecera `---` YAML sencilla → documento JSON |
 
-Los nodos JSON, las listas de cadenas y los resultados son asas `Int` (vec), porque en Sal los structs de varios campos no se pueden pasar ni devolver.
+Los resultados son structs por valor (`ProcResult`, `HttpResult`, `Frontmatter`): se pasan y se devuelven en registros, sin reservar memoria. Los nodos JSON, las listas de cadenas y el estado de un flujo HTTP (`hs_*`) siguen siendo asas `Int` (vec) a propósito: son contenedores de tamaño variable o estado mutable compartido, no valores.
 
 ## Desarrollo
 
@@ -63,7 +63,6 @@ sal install && sal test      # tests/sal/test_*.sal; el de http lanza un servido
 Trampas del compilador Sal que condicionan el estilo del código:
 
 - **No reasignes una variable ya definida dentro de una rama que termina en `return`**: el valor se filtra y un `phi` posterior queda sin definir (`E_INTERNAL: use of undefined value`). Usa nombres temporales propios en esas ramas.
-- Una llave `{` o `}` en un literal es interpolación; escríbela `{{` y `}}`, o usa `char_to_str(123)`.
 - `on` y `from` son palabras reservadas. Un parámetro o local no puede llamarse así.
 - Las cadenas se mueven al asignarlas (`a = b` consume `b`); copia con `str_slice(b, 0, str_len(b))`.
 - No hay `break`: usa una bandera en el `while`. Evita la recursión en cadenas largas.
