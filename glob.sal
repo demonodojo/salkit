@@ -2,11 +2,13 @@
 #   *  cualquier texto sin "/"      **  cualquier texto, incluido "/"
 #   ?  un carácter sin "/"          [abc] [a-z] [!abc]  clases
 #   {a,b}  alternativas (anidables)  \x  carácter literal
+#
+# Los patrones y las rutas se prestan; la lista expandida posee sus cadenas.
 
 import "strbuf.sal"
 
 # Fin de la alternativa que empieza tras "{" en pat[p]: posición de "}" que cierra, o -1.
-fn gl_brace_close(pat: String, p: Int) -> Int
+fn gl_brace_close(pat: &String, p: Int) -> Int
     n = pat.len()
     depth = 1
     i = p
@@ -29,12 +31,12 @@ fn gl_brace_close(pat: String, p: Int) -> Int
     0 - 1
 
 # Expande las llaves {a,b} en una lista de patrones sin llaves.
-fn glob_expand(pat: String) -> Int ! alloc
-    out = vec_new()
-    gl_expand_into(out, pat)
+fn glob_expand(pat: &String) -> List[String] ! alloc
+    out = sk_sl_new()
+    gl_expand_into(&mut out, pat)
     out
 
-fn gl_expand_into(out: Int, pat: String) -> Int ! alloc
+fn gl_expand_into(out: &mut List[String], pat: &String) -> Int ! alloc
     n = pat.len()
     i = 0
     while i < n
@@ -48,20 +50,20 @@ fn gl_expand_into(out: Int, pat: String) -> Int ! alloc
         elsif op == 2
             close = gl_brace_close(pat, i + 1)
             if close < 0
-                x = vec_push(out, pat.slice(0, n).to_int())
+                sk_sl_push(out, pat.slice(0, n))
                 return 0
             pre = pat.slice(0, i)
             post = pat.slice(close + 1, n)
             inner = pat.slice(i + 1, close)
-            return gl_expand_alts(out, pre, inner, post)
+            return gl_expand_alts(out, &pre, &inner, &post)
         else
             i = i + 1
 
-    x = vec_push(out, pat.slice(0, n).to_int())
+    sk_sl_push(out, pat.slice(0, n))
     0
 
 # Reparte `inner` por comas de nivel 0 y expande cada alternativa recursivamente.
-fn gl_expand_alts(out: Int, pre: String, inner: String, post: String) -> Int ! alloc
+fn gl_expand_alts(out: &mut List[String], pre: &String, inner: &String, post: &String) -> Int ! alloc
     n = inner.len()
     depth = 0
     start = 0
@@ -82,15 +84,17 @@ fn gl_expand_alts(out: Int, pre: String, inner: String, post: String) -> Int ! a
             depth = depth - 1
         elsif op == 4
             if depth == 0
-                gl_expand_into(out, pre + inner.slice(start, i) + post)
+                one = pre + inner.slice(start, i) + post
+                gl_expand_into(out, &one)
                 start = i + 1
         i = i + 1
-    gl_expand_into(out, pre + inner.slice(start, n) + post)
+    last = pre + inner.slice(start, n) + post
+    gl_expand_into(out, &last)
 
 # Compara una clase [..] que empieza en pat[pi] ("[") con el byte c.
 # Devuelve (nuevo pi) si casa, -(nuevo pi) - 1 si la clase es válida pero no casa,
 # y -1000000 si la clase no está cerrada.
-fn gl_class(pat: String, pi: Int, c: Int) -> Int
+fn gl_class(pat: &String, pi: Int, c: Int) -> Int
     n = pat.len()
     i = pi + 1
     neg = 0
@@ -142,7 +146,7 @@ fn gl_class(pat: String, pi: Int, c: Int) -> Int
     0 - 1000000
 
 # Casa pat[pi..] con s[si..] (sin llaves; usa glob_match para el patrón completo).
-fn gl_rec(pat: String, pi: Int, s: String, si: Int) -> Int
+fn gl_rec(pat: &String, pi: Int, s: &String, si: Int) -> Int
     pn = pat.len()
     sn = s.len()
     p = pi
@@ -189,7 +193,7 @@ fn gl_rec(pat: String, pi: Int, s: String, si: Int) -> Int
     0
 
 # "*": consume 0..n caracteres sin "/".
-fn gl_star1(pat: String, pi: Int, s: String, si: Int) -> Int
+fn gl_star1(pat: &String, pi: Int, s: &String, si: Int) -> Int
     sn = s.len()
     k = si
     while k <= sn
@@ -203,7 +207,7 @@ fn gl_star1(pat: String, pi: Int, s: String, si: Int) -> Int
     0
 
 # "**": consume cualquier cosa; "**/" también casa con cero directorios.
-fn gl_star2(pat: String, pi: Int, s: String, si: Int) -> Int
+fn gl_star2(pat: &String, pi: Int, s: &String, si: Int) -> Int
     pn = pat.len()
     sn = s.len()
     after = pi
@@ -227,21 +231,23 @@ fn gl_star2(pat: String, pi: Int, s: String, si: Int) -> Int
     0
 
 # 1 si la ruta `s` casa con el glob `pat` (admite llaves).
-fn glob_match(pat: String, s: String) -> Int ! alloc
-    if sk_index_of(pat, String.from_char(123)) < 0
+fn glob_match(pat: &String, s: &String) -> Int ! alloc
+    brace = String.from_char(123)
+    if sk_index_of(pat, &brace) < 0
         return gl_rec(pat, 0, s, 0)
     alts = glob_expand(pat)
-    n = vec_len(alts)
+    n = sk_sl_len(&alts)
     i = 0
     while i < n
-        if gl_rec(str_from_int(vec_get(alts, i)), 0, s, 0) != 0
+        if gl_rec(sk_sl_get(&alts, i), 0, s, 0) != 0
             return 1
         i = i + 1
     0
 
 # Como glob_match, pero un patrón sin "/" se compara con el nombre base (como --include).
-fn glob_match_name(pat: String, path: String) -> Int ! alloc
-    if sk_index_of(pat, "/") >= 0
+fn glob_match_name(pat: &String, path: &String) -> Int ! alloc
+    slash = String.from_char(47)
+    if sk_index_of(pat, &slash) >= 0
         return glob_match(pat, path)
     last = 0 - 1
     i = 0
@@ -250,4 +256,5 @@ fn glob_match_name(pat: String, path: String) -> Int ! alloc
         if path.char(i) == 47
             last = i
         i = i + 1
-    glob_match(pat, path.slice(last + 1, n))
+    base = path.slice(last + 1, n)
+    glob_match(pat, &base)

@@ -1,4 +1,5 @@
 # salkit/base64.sal — codificación base64 estándar (RFC 4648) con relleno.
+# La entrada se presta; el resultado es un String nuevo que libera el llamador.
 
 fn b64_char(v: Int) -> Int
     if v < 26
@@ -11,7 +12,7 @@ fn b64_char(v: Int) -> Int
         return 43
     47
 
-fn b64_encode(b: Bytes) -> String ! alloc
+fn b64_encode(b: &Bytes) -> String ! alloc
     n = b.len()
     m = (n + 2) / 3 * 4
     if m <= 0
@@ -42,10 +43,10 @@ fn b64_encode(b: Bytes) -> String ! alloc
         x = out.set_u8(o + 3, 61)
     bytes_view(out, 0, m).to_str()
 
-fn b64_encode_str(s: String) -> String ! alloc
+fn b64_encode_str(s: &String) -> String ! alloc
     n = s.len()
     if n <= 0
         return ""
     b = Bytes.new(n)
     b.write_str(0, s)
-    b64_encode(b)
+    b64_encode(&b)

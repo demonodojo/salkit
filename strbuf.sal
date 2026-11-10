@@ -1,34 +1,37 @@
-# salkit/strbuf.sal — utilidades de cadena que no reservan memoria por posición.
-# Una lista de cadenas ("sl") es un asa Int (vec con punteros a String).
+# salkit/strbuf.sal — utilidades de cadena y listas de cadenas.
+# Las entradas se prestan (`&String`); las salidas son valores nuevos que el llamador posee.
+# Una lista de cadenas es `List[String]`: posee sus elementos y los libera al salir de ámbito.
 
-fn sk_sl_new() -> Int ! alloc
-    vec_new()
+fn sk_sl_new() -> List[String] ! alloc
+    List.new[String]()
 
-fn sk_sl_push(sl: Int, s: String) -> Int
-    vec_push(sl, str_as_int(s))
+# Mueve `s` a la lista: el llamador deja de ser su dueño (clónalo si lo necesita después).
+fn sk_sl_push(sl: &mut List[String], s: String) -> Unit ! alloc
+    sl.push(s)
 
-fn sk_sl_len(sl: Int) -> Int
-    vec_len(sl)
+fn sk_sl_len(sl: &List[String]) -> Int
+    sl.len()
 
-fn sk_sl_get(sl: Int, i: Int) -> String
-    str_from_int(vec_get(sl, i))
+# Préstamo del elemento `i`; la lista sigue siendo su dueña.
+fn sk_sl_get(sl: &List[String], i: Int) -> &String
+    sl.get(i)
 
 # Posición de `needle` en `hay` desde `start`, o -1. No reserva memoria.
-fn sk_index_from(hay: String, needle: String, start: Int) -> Int
-    hn = str_len(hay)
-    nn = str_len(needle)
+fn sk_index_from(hay: &String, needle: &String, start: Int) -> Int
+    hn = hay.len()
+    nn = needle.len()
     i = start
     if i < 0
         i = 0
     if nn <= 0
         return i
     last = hn - nn
-    first = str_char(needle, 0)
+    first = needle.char(0)
     while i <= last
-        if str_char(hay, i) == first
+        if hay.char(i) == first
             j = 1
             while j < nn
-                if str_char(hay, i + j) != str_char(needle, j)
+                if hay.char(i + j) != needle.char(j)
                     j = nn + 1
                 else
                     j = j + 1
@@ -37,41 +40,41 @@ fn sk_index_from(hay: String, needle: String, start: Int) -> Int
         i = i + 1
     0 - 1
 
-fn sk_index_of(hay: String, needle: String) -> Int
+fn sk_index_of(hay: &String, needle: &String) -> Int
     sk_index_from(hay, needle, 0)
 
-fn sk_contains(hay: String, needle: String) -> Int
+fn sk_contains(hay: &String, needle: &String) -> Int
     if sk_index_from(hay, needle, 0) >= 0
         1
     else
         0
 
-fn sk_starts_with(s: String, prefix: String) -> Int
-    pn = str_len(prefix)
-    if pn > str_len(s)
+fn sk_starts_with(s: &String, prefix: &String) -> Int
+    pn = prefix.len()
+    if pn > s.len()
         return 0
     i = 0
     while i < pn
-        if str_char(s, i) != str_char(prefix, i)
+        if s.char(i) != prefix.char(i)
             return 0
         i = i + 1
     1
 
-fn sk_ends_with(s: String, suffix: String) -> Int
-    sn = str_len(suffix)
-    off = str_len(s) - sn
+fn sk_ends_with(s: &String, suffix: &String) -> Int
+    sn = suffix.len()
+    off = s.len() - sn
     if off < 0
         return 0
     i = 0
     while i < sn
-        if str_char(s, off + i) != str_char(suffix, i)
+        if s.char(off + i) != suffix.char(i)
             return 0
         i = i + 1
     1
 
 # Cuenta ocurrencias (sin solapar) de `needle`.
-fn sk_count(hay: String, needle: String) -> Int
-    nn = str_len(needle)
+fn sk_count(hay: &String, needle: &String) -> Int
+    nn = needle.len()
     if nn <= 0
         return 0
     n = 0
@@ -92,29 +95,29 @@ fn sk_is_space(c: Int) -> Int
         return 1
     0
 
-fn sk_trim(s: String) -> String ! alloc
-    n = str_len(s)
+fn sk_trim(s: &String) -> String ! alloc
+    n = s.len()
     a = 0
     while a < n
-        if sk_is_space(str_char(s, a)) == 0
+        if sk_is_space(s.char(a)) == 0
             return sk_trim_end(s, a)
         a = a + 1
     ""
 
-fn sk_trim_end(s: String, a: Int) -> String ! alloc
-    b = str_len(s)
+fn sk_trim_end(s: &String, a: Int) -> String ! alloc
+    b = s.len()
     while b > a
-        if sk_is_space(str_char(s, b - 1)) == 0
-            return str_slice(s, a, b)
+        if sk_is_space(s.char(b - 1)) == 0
+            return s.slice(a, b)
         b = b - 1
     ""
 
-fn sk_lower(s: String) -> String ! alloc
+fn sk_lower(s: &String) -> String ! alloc
     out = ""
-    n = str_len(s)
+    n = s.len()
     i = 0
     while i < n
-        c = str_char(s, i)
+        c = s.char(i)
         if c >= 65
             if c <= 90
                 c = c + 32
@@ -123,93 +126,93 @@ fn sk_lower(s: String) -> String ! alloc
     out
 
 # Sustituye todas las apariciones de `old` por `new`.
-fn sk_replace_all(s: String, old: String, new: String) -> String ! alloc
-    olen = str_len(old)
+fn sk_replace_all(s: &String, old: &String, new: &String) -> String ! alloc
+    olen = old.len()
     if olen <= 0
-        return str_slice(s, 0, str_len(s))
+        return s.slice(0, s.len())
     out = ""
     pos = 0
     i = sk_index_from(s, old, 0)
     while i >= 0
-        out = out + str_slice(s, pos, i) + new
+        out = out + s.slice(pos, i) + new
         pos = i + olen
         i = sk_index_from(s, old, pos)
-    out = out + str_slice(s, pos, str_len(s))
+    out = out + s.slice(pos, s.len())
     out
 
 # Número de líneas (una última línea sin salto final también cuenta).
-fn sk_count_lines(s: String) -> Int
-    n = str_len(s)
+fn sk_count_lines(s: &String) -> Int
+    n = s.len()
     if n <= 0
         return 0
     c = 0
     i = 0
     while i < n
-        if str_char(s, i) == 10
+        if s.char(i) == 10
             c = c + 1
         i = i + 1
-    if str_char(s, n - 1) != 10
+    if s.char(n - 1) != 10
         c = c + 1
     c
 
 # Divide en líneas (sin \n ni \r final) y devuelve una lista de cadenas.
-fn sk_split_lines(s: String) -> Int ! alloc
-    sl = vec_new()
-    n = str_len(s)
+fn sk_split_lines(s: &String) -> List[String] ! alloc
+    sl = sk_sl_new()
+    n = s.len()
     start = 0
     i = 0
     while i < n
-        if str_char(s, i) == 10
+        if s.char(i) == 10
             e = i
             if e > start
-                if str_char(s, e - 1) == 13
+                if s.char(e - 1) == 13
                     e = e - 1
-            x = vec_push(sl, str_as_int(str_slice(s, start, e)))
+            sk_sl_push(&mut sl, s.slice(start, e))
             start = i + 1
         i = i + 1
     if start < n
         e = n
-        if str_char(s, e - 1) == 13
+        if s.char(e - 1) == 13
             e = e - 1
-        x = vec_push(sl, str_as_int(str_slice(s, start, e)))
+        sk_sl_push(&mut sl, s.slice(start, e))
     sl
 
 # Divide por un separador de un solo carácter (código `sep`); conserva campos vacíos.
-fn sk_split_char(s: String, sep: Int) -> Int ! alloc
-    sl = vec_new()
-    n = str_len(s)
+fn sk_split_char(s: &String, sep: Int) -> List[String] ! alloc
+    sl = sk_sl_new()
+    n = s.len()
     start = 0
     i = 0
     while i < n
-        if str_char(s, i) == sep
-            x = vec_push(sl, str_as_int(str_slice(s, start, i)))
+        if s.char(i) == sep
+            sk_sl_push(&mut sl, s.slice(start, i))
             start = i + 1
         i = i + 1
-    x = vec_push(sl, str_as_int(str_slice(s, start, n)))
+    sk_sl_push(&mut sl, s.slice(start, n))
     sl
 
-fn sk_join(sl: Int, sep: String) -> String ! alloc
+fn sk_join(sl: &List[String], sep: &String) -> String ! alloc
     out = ""
-    n = vec_len(sl)
+    n = sl.len()
     i = 0
     while i < n
         if i > 0
             out = out + sep
-        out = out + str_from_int(vec_get(sl, i))
+        out = out + sl.get(i)
         i = i + 1
     out
 
 # Comparación byte a byte: -1, 0 o 1.
-fn sk_str_cmp(a: String, b: String) -> Int
-    na = str_len(a)
-    nb = str_len(b)
+fn sk_str_cmp(a: &String, b: &String) -> Int
+    na = a.len()
+    nb = b.len()
     m = na
     if nb < m
         m = nb
     i = 0
     while i < m
-        ca = str_char(a, i)
-        cb = str_char(b, i)
+        ca = a.char(i)
+        cb = b.char(i)
         if ca < cb
             return 0 - 1
         if ca > cb
@@ -222,24 +225,48 @@ fn sk_str_cmp(a: String, b: String) -> Int
     0
 
 # 1 si la lista contiene exactamente `s`.
-fn sk_sl_contains(sl: Int, s: String) -> Int
-    n = vec_len(sl)
+fn sk_sl_contains(sl: &List[String], s: &String) -> Int
+    n = sl.len()
     i = 0
     while i < n
-        if str_eq(str_from_int(vec_get(sl, i)), s) != 0
+        if sl.get(i).eq(s) != 0
             return 1
         i = i + 1
     0
 
-# Ordena la lista de cadenas en su sitio (merge sort ascendente por bytes).
-fn sk_sl_sort(sl: Int) -> Int ! alloc
-    n = vec_len(sl)
+# Ordena la lista de cadenas en su sitio (ascendente por bytes).
+# Ordena una permutación de índices (O(n log n) comparaciones) y rehace la lista con clones,
+# que es como se reordena un contenedor que posee sus cadenas.
+fn sk_sl_sort(sl: &mut List[String]) -> Int ! alloc
+    n = sl.len()
     if n < 2
         return 0
-    tmp = vec_new()
+    idx = List.new[Int]()
+    i = 0
+    while i < n
+        idx.push(i)
+        i = i + 1
+    sk_idx_sort(sl, &mut idx)
+    out = sk_sl_new()
+    k = 0
+    while k < n
+        sk_sl_push(&mut out, sl.get(idx.get(k)).clone())
+        k = k + 1
+    k = 0
+    while k < n
+        sl.set(k, out.get(k).clone())
+        k = k + 1
+    0
+
+# Merge sort ascendente de `idx` comparando las cadenas de `sl`.
+fn sk_idx_sort(sl: &List[String], idx: &mut List[Int]) -> Int ! alloc
+    n = idx.len()
+    if n < 2
+        return 0
+    tmp = List.new[Int]()
     z = 0
     while z < n
-        x = vec_push(tmp, 0)
+        tmp.push(0)
         z = z + 1
     width = 1
     while width < n
@@ -259,28 +286,28 @@ fn sk_sl_sort(sl: Int) -> Int ! alloc
                 if i < mid
                     if j >= hi
                         take_left = 1
-                    elsif sk_str_cmp(str_from_int(vec_get(sl, i)), str_from_int(vec_get(sl, j))) <= 0
+                    elsif sk_str_cmp(sl.get(idx.get(i)), sl.get(idx.get(j))) <= 0
                         take_left = 1
                 if take_left != 0
-                    x = vec_set(tmp, k, vec_get(sl, i))
+                    tmp.set(k, idx.get(i))
                     i = i + 1
                 else
-                    x = vec_set(tmp, k, vec_get(sl, j))
+                    tmp.set(k, idx.get(j))
                     j = j + 1
                 k = k + 1
             c = lo
             while c < hi
-                x = vec_set(sl, c, vec_get(tmp, c))
+                idx.set(c, tmp.get(c))
                 c = c + 1
             lo = lo + width * 2
         width = width * 2
     0
 
 # Recorta `s` a `max` bytes conservando cabeza y cola, con un aviso en medio.
-fn sk_truncate_middle(s: String, max: Int) -> String ! alloc
-    n = str_len(s)
+fn sk_truncate_middle(s: &String, max: Int) -> String ! alloc
+    n = s.len()
     if n <= max
-        return str_slice(s, 0, n)
+        return s.slice(0, n)
     head = max * 6 / 10
     tail = max - head
-    str_slice(s, 0, head) + char_to_str(10) + "... [" + int_to_str(n - max) + " bytes truncated] ..." + char_to_str(10) + str_slice(s, n - tail, n)
+    s.slice(0, head) + char_to_str(10) + "... [" + int_to_str(n - max) + " bytes truncated] ..." + char_to_str(10) + s.slice(n - tail, n)

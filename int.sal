@@ -1,4 +1,5 @@
 # salkit/int.sal — conversión de texto a entero (std no trae parseo decimal).
+# Las cadenas se prestan: ningún parámetro se mueve al llamador.
 
 # Valor del dígito `c` en base 16 (0-15), o -1 si no es un dígito hexadecimal.
 fn sk_hex_digit(c: Int) -> Int
@@ -14,7 +15,7 @@ fn sk_hex_digit(c: Int) -> Int
     0 - 1
 
 # 1 si `s` es un entero decimal con signo opcional y al menos un dígito.
-fn sk_is_int(s: String) -> Int
+fn sk_is_int(s: &String) -> Int
     n = s.len()
     i = 0
     if n > 0
@@ -33,7 +34,7 @@ fn sk_is_int(s: String) -> Int
 
 # Entero decimal con signo opcional; se detiene en el primer carácter no numérico.
 # Devuelve 0 si no hay dígitos.
-fn sk_parse_int(s: String) -> Int
+fn sk_parse_int(s: &String) -> Int
     n = s.len()
     i = 0
     neg = 0
@@ -57,7 +58,7 @@ fn sk_parse_int(s: String) -> Int
         acc
 
 # Entero hexadecimal sin prefijo; se detiene en el primer dígito inválido.
-fn sk_parse_hex(s: String) -> Int
+fn sk_parse_hex(s: &String) -> Int
     n = s.len()
     i = 0
     acc = 0
