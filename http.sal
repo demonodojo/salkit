@@ -91,30 +91,31 @@ fn http_dechunk(raw: &String) -> String ! alloc
     out
 
 # Escribe todo `data` en el socket; 0 si ok.
-fn http_send_all(fd: Int, data: &String) -> Int ! io, alloc
+fn http_send_all(fd: &Fd, data: &String) -> Int ! io, alloc
     n = data.len()
     buf = Bytes.new(n)
     buf.write_str(0, data)
     pos = 0
     while pos < n
-        k = Fd.new(fd).write(buf.ptr() + pos, n - pos)
+        k = fd.write(buf.ptr() + pos, n - pos)
         if k <= 0
             return 1
         pos = pos + k
     0
 
-fn http_connect(host: &String, port: Int, timeout_ms: Int) -> Int ! io, alloc
+# Socket conectado; `Fd` con valor negativo si falló.
+fn http_connect(host: &String, port: Int, timeout_ms: Int) -> Fd ! io, alloc
     if host.eq(&"127.0.0.1") != 0
-        return tcp_connect_loopback(port, timeout_ms)
+        return Fd.new(tcp_connect_loopback(port, timeout_ms))
     if host.eq(&"localhost") != 0
-        return tcp_connect_loopback(port, timeout_ms)
-    tcp_connect_host(host, port, timeout_ms)
+        return Fd.new(tcp_connect_loopback(port, timeout_ms))
+    Fd.new(tcp_connect_host(host, port, timeout_ms))
 
 # Petición genérica. `extra_headers` son líneas "Nombre: valor" separadas por "\r\n"
 # (puede ser ""). `timeout_ms` es el plazo total; `max_bytes` limita la respuesta.
 fn http_request(method: &String, host: &String, port: Int, path: &String, extra_headers: &String, body: &String, timeout_ms: Int, max_bytes: Int) -> HttpResult ! io, alloc
     fd = http_connect(host, port, 5000)
-    if fd < 0
+    if fd.v < 0
         return http_result(0, "", "connect failed to " + host + ":" + port.to_str(), "")
     req = method + " " + path + " HTTP/1.1\r\nHost: " + host + ":" + port.to_str() + "\r\nConnection: close\r\nAccept: */*\r\n"
     if extra_headers.len() > 0
@@ -124,8 +125,8 @@ fn http_request(method: &String, host: &String, port: Int, path: &String, extra_
     elsif method.eq(&"POST") != 0
         req = req + "Content-Length: 0\r\n"
     req = req + "\r\n" + body
-    if http_send_all(fd, &req) != 0
-        Fd.new(fd).close()
+    if http_send_all(&fd, &req) != 0
+        fd.close()
         return http_result(0, "", "send failed", "")
     deadline = uptime_ms() + timeout_ms
     chunk = Bytes.new(65536)
@@ -144,7 +145,7 @@ fn http_request(method: &String, host: &String, port: Int, path: &String, extra_
             slice = left
             if slice > 200
                 slice = 200
-            k = Fd.new(fd).read_timeout(chunk.ptr(), 65536, slice)
+            k = fd.read_timeout(chunk.ptr(), 65536, slice)
             if k > 0
                 acc = acc + bytes_view(chunk, 0, k).to_str()
                 if hend < 0
@@ -171,7 +172,7 @@ fn http_request(method: &String, host: &String, port: Int, path: &String, extra_
                 go = 0
             elsif k != 0 - 11
                 go = 0
-    Fd.new(fd).close()
+    fd.close()
     if hend < 0
         if timed_out != 0
             return http_result(0, "", "timeout after " + timeout_ms.to_str() + " ms", "")
@@ -217,7 +218,7 @@ fn http_post_json(host: &String, port: Int, path: &String, token: &String, body:
 # El struct posee sus búferes: al salir de ámbito se liberan cuerpo, crudo y cabeceras.
 
 struct HttpStream
-    fd: Int
+    fd: Fd
     status: Int
     err: String
     body: String
@@ -238,7 +239,7 @@ fn hs_error(h: &HttpStream) -> &String
 fn hs_headers(h: &HttpStream) -> &String
     &h.headers
 
-fn hs_new(fd: Int, status: Int, err: String, idle: Int) -> HttpStream ! alloc
+fn hs_new(fd: Fd, status: Int, err: String, idle: Int) -> HttpStream ! alloc
     HttpStream(fd, status, err, "", 0, 0, "", 0, 0, idle, "")
 
 # Decodifica los chunks completos que haya en el búfer crudo y los añade al cuerpo.
@@ -270,11 +271,10 @@ fn hs_decode(h: &mut HttpStream) -> Int ! alloc
 fn hs_pump(h: &mut HttpStream) -> Int ! io, alloc
     if h.done != 0
         return 0
-    fd = h.fd
     chunk = Bytes.new(65536)
     waited = 0
     while waited < h.idle
-        k = Fd.new(fd).read_timeout(chunk.ptr(), 65536, 200)
+        k = h.fd.read_timeout(chunk.ptr(), 65536, 200)
         if k > 0
             piece = bytes_view(chunk, 0, k).to_str()
             if h.chunked != 0
@@ -297,15 +297,15 @@ fn hs_pump(h: &mut HttpStream) -> Int ! io, alloc
 # Abre una petición POST JSON y lee las cabeceras. hs_status es 0 si falló (ver hs_error).
 fn hs_open(host: &String, port: Int, path: &String, token: &String, body: &String, timeout_ms: Int) -> HttpStream ! io, alloc
     fd = http_connect(host, port, 5000)
-    if fd < 0
-        return hs_new(0 - 1, 0, "connect failed to " + host + ":" + port.to_str(), timeout_ms)
+    if fd.v < 0
+        return hs_new(fd, 0, "connect failed to " + host + ":" + port.to_str(), timeout_ms)
     req = "POST " + path + " HTTP/1.1\r\nHost: " + host + ":" + port.to_str() + "\r\nConnection: close\r\nAccept: text/event-stream\r\nContent-Type: application/json\r\n"
     if token.len() > 0
         req = req + "Authorization: Bearer " + token + "\r\n"
     req = req + "Content-Length: " + body.len().to_str() + "\r\n\r\n" + body
-    if http_send_all(fd, &req) != 0
-        Fd.new(fd).close()
-        return hs_new(0 - 1, 0, "send failed", timeout_ms)
+    if http_send_all(&fd, &req) != 0
+        fd.close()
+        return hs_new(Fd.new(0 - 1), 0, "send failed", timeout_ms)
     h = hs_new(fd, 0, "", timeout_ms)
     acc = ""
     hend = 0 - 1
@@ -316,7 +316,7 @@ fn hs_open(host: &String, port: Int, path: &String, token: &String, body: &Strin
             h.err = "timeout waiting for response headers"
             hend = 0 - 2
         else
-            k = Fd.new(fd).read_timeout(chunk.ptr(), 65536, 200)
+            k = h.fd.read_timeout(chunk.ptr(), 65536, 200)
             if k > 0
                 acc = acc + bytes_view(chunk, 0, k).to_str()
                 hend = sk_index_of(&acc, &"\r\n\r\n")
@@ -386,7 +386,6 @@ fn hs_read_rest(h: &mut HttpStream) -> String ! io, alloc
     h.body.slice(h.pos, h.body.len())
 
 fn hs_close(h: &mut HttpStream) -> Int ! io
-    fd = h.fd
-    if fd >= 0
-        return Fd.new(fd).close()
+    if h.fd.v >= 0
+        return h.fd.close()
     0

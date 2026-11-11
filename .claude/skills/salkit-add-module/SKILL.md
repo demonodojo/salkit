@@ -16,14 +16,17 @@ description: Convenciones para añadir o modificar un módulo de salkit (prefijo
 
 Si el cambio rompe la API pública de un módulo existente, tenlo en cuenta al elegir la versión (skill `salkit-release`).
 
-## Compilador
+## Compilador y memoria
 
 Este `sal` (el de `../sal/target/release/sal`) no es el de `~/.cargo/bin`. Al escribir `.sal`:
 
+- Memoria (SPEC «Memoria»): un valor con dueño se **mueve**; se presta con `&T` / `&mut T`; la copia profunda es **`.clone()`**. No escribas modos `borrow`/`take`/`keep` (son `E_PARSE`). No uses asas `vec_*` / `str_as_int` / `str_from_int` para cadenas o listas: usa `String`, `List[T]` y structs.
+- Un accesor que solo lee un campo `String` del struct debe devolver `&String` (p. ej. `&r.body`). Si el llamador necesita una segunda dueña, `.clone()`. Devolver el campo por valor mueve ese campo fuera del struct.
+- No escribas funciones que devuelvan `&Struct` (p. ej. `-> &JsonDoc`): el compilador devuelve un puntero inválido y el llamador se cae (SEGV). `-> &String` sí funciona. Presta el campo en el sitio: `d = &fm.doc`.
+- `List.push` / `sk_sl_push` **mueven** el elemento: clona antes si lo vas a seguir usando. `list.get` / `sk_sl_get` prestan (`&T`).
 - `{` y `}` dentro de una cadena son literales. No las escribas `{{` ni `}}`.
-- No llames a lo marcado `@deprecated` en `std/io`. Sustitutos: `Path.new(path).size()`, `.is_dir()`, `.mtime()`, `.open_read()`, `.parent()`, `.mkdir_p()`; `Fd.new(fd).read(ptr, len)`, `.write(ptr, len)`, `.write_str(s)`, `.close()`, `.read_timeout(ptr, len, ms)`; `Pipe.create()` y `.read_fd()` / `.write_fd()`; `Wait.from_raw(status).exit_code()`. Un aviso `W_DEPRECATED` no tumba el test, pero no se deja.
+- No llames a lo marcado `@deprecated` en `std/io`. Sustitutos: `Path.new(path.clone()).size()` (y `.is_dir()`, `.mtime()`, `.open_read()`, `.parent()`, `.mkdir_p()`; `Path.new` toma `String` por valor); `Fd.new(fd).read/write/write_str/close/read_timeout`; `Pipe.create()` / `.read_fd()` / `.write_fd()`; `Wait.from_raw(status).exit_code()`. Un aviso `W_DEPRECATED` no tumba el test, pero no se deja.
 - Un brazo de `match` en la misma línea tiene que ser una expresión: `return` no lo es. Los brazos con bloque sobre un `Int` no aplican las asignaciones y un `return` en el comodín deja un phi sin definir (`E_INTERNAL: use of undefined value`). El `match` devuelve un valor (`step = match c ...`) y la asignación o el `return` van fuera.
 - `&&` y `||` cortocircuitan (`&&` ata más que `||`). Sirven para juntar `if` anidados que comparten el mismo cuerpo. El operando derecho no se evalúa si el izquierdo ya decide.
-- Devolver un campo `String` de un struct libera los demás. Un accesor que se puede llamar más de una vez sobre el mismo valor lo toma `borrow` y copia: `s.slice(0, s.len())`.
 - No reasignes una variable ya definida en una rama que termina en `return`: el phi posterior queda sin definir. Usa un nombre nuevo en esa rama.
 - `on` y `from` son palabras reservadas. No hay `break`: usa una bandera en el `while`.

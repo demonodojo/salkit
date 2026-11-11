@@ -50,8 +50,8 @@ fn fsx_read_bytes_max(path: &String, max: Int) -> Bytes ! io, alloc
         return Bytes.new(0)
     if size > max
         size = max
-    fd = p.open_read()
-    if fd < 0
+    fd = Fd.new(p.open_read())
+    if fd.v < 0
         return Bytes.new(0)
     buf = Bytes.new(size)
     pos = 0
@@ -60,12 +60,12 @@ fn fsx_read_bytes_max(path: &String, max: Int) -> Bytes ! io, alloc
         if pos >= size
             go = 0
         else
-            k = Fd.new(fd).read(buf.ptr() + pos, size - pos)
+            k = fd.read(buf.ptr() + pos, size - pos)
             if k <= 0
                 go = 0
             else
                 pos = pos + k
-    Fd.new(fd).close()
+    fd.close()
     bytes_view(buf, 0, pos)
 
 fn fsx_read_bytes(path: &String) -> Bytes ! io, alloc
@@ -82,7 +82,7 @@ fn fsx_read_text(path: &String) -> String ! io, alloc
     fsx_read_text_max(path, 268435456)
 
 # Escribe todo `data` en `fd` (varios write si hace falta). 0 si ok, 1 si error.
-fn fsx_write_fd(fd: Int, data: &String) -> Int ! io, alloc
+fn fsx_write_fd(fd: &Fd, data: &String) -> Int ! io, alloc
     n = data.len()
     if n <= 0
         return 0
@@ -90,34 +90,35 @@ fn fsx_write_fd(fd: Int, data: &String) -> Int ! io, alloc
     buf.write_str(0, data)
     pos = 0
     while pos < n
-        k = Fd.new(fd).write(buf.ptr() + pos, n - pos)
+        k = fd.write(buf.ptr() + pos, n - pos)
         if k <= 0
             return 1
         pos = pos + k
     0
 
-fn fsx_open_write(path: &String, flags: Int) -> Int ! io, alloc
+# Abre `path` para escribir creando los directorios padre; `Fd` negativo si falla.
+fn fsx_open_write(path: &String, flags: Int) -> Fd ! io, alloc
     parent = Path.new(path.clone()).parent()
     if parent.len() > 0
         Path.new(parent).mkdir_p()
     b = path_to_buf(path)
-    open_flags(b.ptr(), path.len(), flags)
+    Fd.new(open_flags(b.ptr(), path.len(), flags))
 
 # Crea los directorios que falten y sobrescribe el fichero. 0 si ok.
 fn fsx_write(path: &String, data: &String) -> Int ! io, alloc
     fd = fsx_open_write(path, O_WRONLY + O_CREAT + O_TRUNC)
-    if fd < 0
+    if fd.v < 0
         return 1
-    r = fsx_write_fd(fd, data)
-    Fd.new(fd).close()
+    r = fsx_write_fd(&fd, data)
+    fd.close()
     r
 
 fn fsx_append(path: &String, data: &String) -> Int ! io, alloc
     fd = fsx_open_write(path, O_WRONLY + O_CREAT + O_APPEND)
-    if fd < 0
+    if fd.v < 0
         return 1
-    r = fsx_write_fd(fd, data)
-    Fd.new(fd).close()
+    r = fsx_write_fd(&fd, data)
+    fd.close()
     r
 
 fn fsx_remove(path: &String) -> Int ! io, alloc
@@ -128,13 +129,13 @@ fn fsx_remove(path: &String) -> Int ! io, alloc
 # cuenta como directorio un enlace simbólico que apunta a uno).
 fn fsx_list_dir(dir: &String) -> List[String] ! io, alloc
     sl = sk_sl_new()
-    fd = Path.new(dir.clone()).open_read()
-    if fd < 0
+    fd = Fd.new(Path.new(dir.clone()).open_read())
+    if fd.v < 0
         return sl
     buf = Bytes.new(DIRENT_SIZE)
     go = 1
     while go != 0
-        got = getdents_fd(fd, buf.ptr(), DIRENT_SIZE)
+        got = getdents_fd(fd.v, buf.ptr(), DIRENT_SIZE)
         if got <= 0
             go = 0
         else
@@ -150,7 +151,7 @@ fn fsx_list_dir(dir: &String) -> List[String] ! io, alloc
                     if buf.get_u8(DIRENT_OFF_FILE_TYPE) == FT_DIR
                         name = name + "/"
                     sk_sl_push(&mut sl, name)
-    x = Fd.new(fd).close()
+    x = fd.close()
     sk_sl_sort(&mut sl)
     sl
 

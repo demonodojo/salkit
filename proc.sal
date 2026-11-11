@@ -35,16 +35,24 @@ fn proc_truncated(r: &ProcResult) -> Int
 fn proc_result(exit_code: Int, timed_out: Int, output: String, truncated: Int) -> ProcResult
     ProcResult(exit_code, timed_out, output, truncated)
 
-fn proc_argv_tab(argv: &List[String]) -> Bytes ! alloc
-    n = vec_len(argv)
+# Tabla argv para spawn: `tab` apunta a los bytes de `bufs`; hay que mantener `bufs` vivo
+# hasta después de `spawn_io_argv` (si no, los punteros quedan colgando al liberar).
+struct ProcArgv
+    tab: Bytes
+    bufs: List[Bytes]
+
+fn proc_argv_tab(argv: &List[String]) -> ProcArgv ! alloc
+    n = argv.len()
     tab = Bytes.new(n * 16 + 16)
+    bufs = List.new[Bytes]()
     i = 0
     while i < n
         s = sk_sl_get(argv, i)
         buf = spawn_string_buf(s)
         spawn_argv_slot_ptr(&tab, i, &buf, s.len())
+        bufs.push(buf)
         i = i + 1
-    tab
+    ProcArgv(tab, bufs)
 
 # Ejecuta `path` con la lista de argumentos `argv` (incluye argv[0]).
 # `cwd` vacío = directorio actual. La salida se recorta a `max_bytes` (cabeza + cola).
@@ -69,13 +77,13 @@ fn proc_run_marker(path: &String, argv: &List[String], cwd: &String, timeout_ms:
     if packed < 0
         return proc_result(127, 0, "pipe failed", 0)
     pp = Pipe.from_packed(packed)
-    rd = pp.read_fd()
-    wr = pp.write_fd()
-    tab = proc_argv_tab(argv)
-    pid = spawn_io_argv(path, vec_len(argv), &tab, SPAWN_FD_CLOSED, wr, wr, cwd, 0 - 1)
-    x = Fd.new(wr).close()
+    rd = Fd.new(pp.read_fd())
+    wr = Fd.new(pp.write_fd())
+    av = proc_argv_tab(argv)
+    pid = spawn_io_argv(path, argv.len(), &av.tab, SPAWN_FD_CLOSED, wr.v, wr.v, cwd, 0 - 1)
+    x = wr.close()
     if pid < 0
-        Fd.new(rd).close()
+        rd.close()
         return proc_result(127, 0, "failed to start " + path, 0)
     chunk = Bytes.new(65536)
     deadline = uptime_ms() + timeout_ms
@@ -95,7 +103,7 @@ fn proc_run_marker(path: &String, argv: &List[String], cwd: &String, timeout_ms:
             slice = left
             if slice > 100
                 slice = 100
-            k = Fd.new(rd).read_timeout(chunk.ptr(), 65536, slice)
+            k = rd.read_timeout(chunk.ptr(), 65536, slice)
             if k > 0
                 before = acc.len()
                 if total < hard_cap
@@ -114,7 +122,7 @@ fn proc_run_marker(path: &String, argv: &List[String], cwd: &String, timeout_ms:
     if timed_out != 0
         x = kill_pid(pid, 9)
     status = wait_pid(pid)
-    x = Fd.new(rd).close()
+    x = rd.close()
     code = Wait.from_raw(status).exit_code()
     if marker.len() > 0
         mp = proc_marker_pos(&acc, marker, 0)

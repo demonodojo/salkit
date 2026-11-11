@@ -6,7 +6,7 @@ fn main() -> Int ! io, alloc
     f = 0
     src = "---\ndescription: Review code safely\nmode: subagent\nmodel: \"anthropic/claude\"\ntemperature: 3\nhidden: true\ntools:\n  write: false\n  edit: false\npermission:\n  bash:\n    \"git diff\": allow\n    \"*\": ask\n  edit: deny\nlist:\n  - one\n  - two words\ninline: [a, b, 7]\nurl: http://x.y/z # comment\n# only comment\nempty:\n---\nBody line 1\n\nBody line 3\n"
     fm = fm_parse(&src)
-    d = fm_doc(&fm)
+    d = &fm.doc
     r = fm_root(&fm)
     f = f + ck_int(fm_has_header(&fm), 1, 1)
     f = f + ck_int(json_ok(d), 1, 2)

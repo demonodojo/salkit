@@ -25,7 +25,7 @@ struct Regex
     ppos: Int
     marks: List[Int]
     gen: Int
-    ast: List[List[Int]]
+    ast: RxAst
     bmin: Int
     bmax: Int
     bpos: Int
@@ -47,45 +47,57 @@ fn regex_end(re: &Regex) -> Int
 
 # Nodos: 1 CHAR(a), 2 ANY, 3 CLASS(a), 4 BOL, 5 EOL, 6 WB, 7 NWB, 8 GROUP(first),
 # 9 CAT(hijos), 10 ALT(a,b), 11 REPEAT(a,min=b,max=c), 12 EMPTY.
-# El AST son siete listas paralelas (kind, a, b, c, first, next, last) dentro del programa.
+# El AST es un `RxAst`: listas paralelas con nombre; cada nodo es un índice Int (-1 = ninguno).
+
+struct RxAst
+    kind: List[Int]
+    a: List[Int]
+    b: List[Int]
+    c: List[Int]
+    first: List[Int]
+    last: List[Int]
+    next: List[Int]
+
+fn rxa_empty() -> RxAst ! alloc
+    RxAst(List.new[Int](), List.new[Int](), List.new[Int](), List.new[Int](), List.new[Int](), List.new[Int](), List.new[Int]())
 
 fn rxa_new(re: &mut Regex, kind: Int, a: Int, b: Int, c: Int) -> Int ! alloc
-    id = re.ast.get(0).len()
-    re.ast.get_mut(0).push(kind)
-    re.ast.get_mut(1).push(a)
-    re.ast.get_mut(2).push(b)
-    re.ast.get_mut(3).push(c)
-    re.ast.get_mut(4).push(0 - 1)
-    re.ast.get_mut(5).push(0 - 1)
-    re.ast.get_mut(6).push(0 - 1)
+    id = re.ast.kind.len()
+    re.ast.kind.push(kind)
+    re.ast.a.push(a)
+    re.ast.b.push(b)
+    re.ast.c.push(c)
+    re.ast.first.push(0 - 1)
+    re.ast.last.push(0 - 1)
+    re.ast.next.push(0 - 1)
     id
 
 fn rxa_add(re: &mut Regex, parent: Int, child: Int) -> Int ! alloc
-    last = re.ast.get(5).get(parent)
+    last = re.ast.last.get(parent)
     if last < 0
-        re.ast.get_mut(4).set(parent, child)
+        re.ast.first.set(parent, child)
     else
-        re.ast.get_mut(6).set(last, child)
-    re.ast.get_mut(5).set(parent, child)
+        re.ast.next.set(last, child)
+    re.ast.last.set(parent, child)
     child
 
-fn rxa_kind(ast: &List[List[Int]], n: Int) -> Int
-    ast.get(0).get(n)
+fn rxa_kind(ast: &RxAst, n: Int) -> Int
+    ast.kind.get(n)
 
-fn rxa_a(ast: &List[List[Int]], n: Int) -> Int
-    ast.get(1).get(n)
+fn rxa_a(ast: &RxAst, n: Int) -> Int
+    ast.a.get(n)
 
-fn rxa_b(ast: &List[List[Int]], n: Int) -> Int
-    ast.get(2).get(n)
+fn rxa_b(ast: &RxAst, n: Int) -> Int
+    ast.b.get(n)
 
-fn rxa_c(ast: &List[List[Int]], n: Int) -> Int
-    ast.get(3).get(n)
+fn rxa_c(ast: &RxAst, n: Int) -> Int
+    ast.c.get(n)
 
-fn rxa_first(ast: &List[List[Int]], n: Int) -> Int
-    ast.get(4).get(n)
+fn rxa_first(ast: &RxAst, n: Int) -> Int
+    ast.first.get(n)
 
-fn rxa_next(ast: &List[List[Int]], n: Int) -> Int
-    ast.get(6).get(n)
+fn rxa_next(ast: &RxAst, n: Int) -> Int
+    ast.next.get(n)
 
 # ---------------------------------------------------------------- clases
 
@@ -171,10 +183,18 @@ fn rxm_class(re: &Regex, idx: Int, c: Int) -> Int
 
 # ---------------------------------------------------------------- parser
 
+# No asigna re.err aquí: hacerlo vía &mut a mitad del parse corrompe el heap
+# (bug del compilador con String en struct mientras el AST se muta). Se guarda
+# posición + mensaje en marks (aún vacío); regex_compile lo materializa al fallar.
 fn rxp_fail(re: &mut Regex, msg: &String) -> Int ! alloc
-    if re.err.len() == 0
-        text = msg + " at position " + re.ppos.to_str()
-        re.err = text
+    if re.gen == 0
+        re.gen = 1
+        re.marks.push(re.ppos)
+        i = 0
+        n = msg.len()
+        while i < n
+            re.marks.push(msg.char(i))
+            i = i + 1
     0 - 1
 
 fn rxp_peek(re: &Regex, pat: &String) -> Int
@@ -193,7 +213,7 @@ fn rxp_alt(re: &mut Regex, pat: &String) -> Int ! alloc
     if left < 0
         return 0 - 1
     while rxp_peek(re, pat) == 124
-        x = rxp_eat(re)
+        rxp_eat(re)
         right = rxp_cat(re, pat)
         if right < 0
             return 0 - 1
@@ -567,7 +587,10 @@ fn rxm_add(re: &mut Regex, list: &mut List[Int], cnt: Int, pc: Int, text: &Strin
         if rxm_boundary(text, i) == 0
             return rxm_add(re, list, cnt, pc + 1, text, i, gen)
         return cnt
-    list.set(cnt, pc)
+    if cnt < list.len()
+        list.set(cnt, pc)
+    else
+        list.push(pc)
     cnt + 1
 
 fn rxm_boundary(text: &String, i: Int) -> Int
@@ -662,17 +685,27 @@ fn rxf_walk(re: &mut Regex, pc: Int, seen: &mut List[Int]) -> Int ! alloc
     0
 
 fn regex_compile(pat: &String, icase: Int) -> Regex ! alloc
-    ast = List.new[List[Int]]()
-    j = 0
-    while j < 7
-        ast.push(List.new[Int]())
-        j = j + 1
+    ast = rxa_empty()
     re = Regex(List.new[Int](), List.new[Int](), List.new[Int](), icase, List.new[Int](), 0, 0 - 1, List.new[List[Int]](), d"", 0, List.new[Int](), 0, ast, 0 - 1, 0 - 1, 0 - 1)
     root = rxp_alt(&mut re, pat)
     if root >= 0
         if re.ppos < pat.len()
             root = rxp_fail(&mut re, &"unmatched )")
     if root < 0
+        epos = 0
+        text = d""
+        if re.marks.len() > 0
+            epos = re.marks.get(0)
+            i = 1
+            while i < re.marks.len()
+                ch = re.marks.get(i)
+                text = text + String.from_char(ch)
+                i = i + 1
+        pos = epos.to_str()
+        mid = text + " at position "
+        re.err = mid + pos
+        re.marks = List.new[Int]()
+        re.gen = 0
         return re
     x = rxc_emit(&mut re, root)
     x = rxc_push(&mut re, 6, 0, 0)

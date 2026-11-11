@@ -8,15 +8,14 @@ import "json.sal"
 import "strbuf.sal"
 import "int.sal"
 
-# Resultado de `fm_parse`: documento JSON (asa de json.sal), cuerpo (texto tras la
+# Resultado de `fm_parse`: documento JSON (`JsonDoc` de json.sal), cuerpo (texto tras la
 # cabecera) y si había cabecera (1/0). Posee el documento y el cuerpo.
+# Para leer el documento con json_*, préstalo directamente: `d = &fm.doc`.
+# (No hay accesor `fm_doc`: el compilador actual rompe las funciones que devuelven `&Struct`.)
 struct Frontmatter
     doc: JsonDoc
     body: String
     has_header: Int
-
-fn fm_doc(fm: &Frontmatter) -> &JsonDoc
-    &fm.doc
 
 fn fm_root(fm: &Frontmatter) -> Int
     json_root(&fm.doc)
