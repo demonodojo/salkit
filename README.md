@@ -19,8 +19,8 @@ Cada versión es un tag ligero `vX.Y.Z` cuyo número coincide con `version` de `
 
 ```bash
 # subir version en Sal.toml, commit, y:
-git tag v0.2.0
-git push origin main v0.2.0
+git tag v0.2.1
+git push origin main v0.2.1
 ```
 
 Mientras sea `0.x`, un cambio de minor (`0.2` → `0.3`) puede romper la API; los parches (`0.2.x`) solo corrigen.
