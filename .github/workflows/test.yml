@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Salkit
+        uses: actions/checkout@v4
+        with:
+          path: salkit
+
+      - name: Checkout Sal v0.5.0
+        uses: actions/checkout@v4
+        with:
+          repository: demonodojo/sal
+          ref: v0.5.0
+          path: sal
+
+      - name: Checkout soso
+        uses: actions/checkout@v4
+        with:
+          repository: demonodojo/soso
+          path: soso
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Sal
+        working-directory: sal
+        run: cargo build --release --locked --bin sal
+
+      - name: Run Salkit tests
+        working-directory: salkit
+        run: |
+          ../sal/target/release/sal install
+          ../sal/target/release/sal test

@@ -56,6 +56,8 @@ Los resultados con dueño son structs (`ProcResult`, `HttpResult`, `Frontmatter`
 
 ## Desarrollo
 
+Salkit se comprueba con Sal **v0.5.0**. Instala esa versión del compilador y asegúrate de que `sal --version` muestra `sal 0.5.0`; una instalación antigua puede no disponer de `install` o `test`. La integración continua compila esa versión desde el repositorio de Sal.
+
 ```bash
 sal install && sal test      # tests/sal/test_*.sal; el de http lanza un servidor Python local
 ```
